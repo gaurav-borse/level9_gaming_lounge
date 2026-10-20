@@ -1,0 +1,93 @@
+import { DatabaseBackup } from "lucide-react";
+import { ActionForm } from "@/components/action-form";
+import { DeleteButton } from "@/components/menu/DeleteButton";
+import { backupsDir, KEEP, listBackups } from "@/lib/backup";
+import type { BackupFile } from "@/lib/backup";
+import { getSetting } from "@/lib/db/settings";
+import { dateTime } from "@/lib/format";
+import { btnCls, btnPrimaryCls, cardCls, inputCls, labelCls } from "@/lib/ui";
+import { backupNowAction, restoreBackupAction, saveBackupFolderAction } from "./actions";
+
+const KIND = { auto: "Automatic", upgrade: "Before an app update", restore: "Before a restore" } as const;
+const size = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+function Row({ f, from }: { f: BackupFile; from: "main" | "second" }) {
+  return (
+    <tr>
+      <td className="px-4 py-3">{dateTime(f.at)}</td>
+      <td className="px-4 py-3 text-silver">{KIND[f.kind]}</td>
+      <td className="px-4 py-3 text-silver">{from === "main" ? "This computer" : "Second folder"}</td>
+      <td className="tnum px-4 py-3 text-right text-silver">{size(f.size)}</td>
+      <td className="px-4 py-3 text-right">
+        <ActionForm action={restoreBackupAction} success="Restored. Sign in again.">
+          <input type="hidden" name="from" value={from} />
+          <input type="hidden" name="name" value={f.name} />
+          <DeleteButton
+            label="Restore"
+            confirmText={`Go back to the data as it was on ${dateTime(f.at)}?\n\nEverything entered since then (bills, customers, settings) will be replaced. A copy of today's data is saved first, so you can undo this. You will have to sign in again.`}
+          />
+        </ActionForm>
+      </td>
+    </tr>
+  );
+}
+
+export function BackupsTab() {
+  const second = getSetting("backup.folder");
+  const main = listBackups(backupsDir());
+  const other = second ? listBackups(second) : [];
+  const last = main.find((b) => b.kind === "auto");
+  return (
+    <div className="space-y-6">
+      <section className={`${cardCls} space-y-4 p-6`}>
+        <h2 className="font-display text-xl font-semibold">Backups</h2>
+        <p className="max-w-prose text-sm text-mute">
+          The app saves a copy of all your data on its own when it starts and every 6 hours, and keeps the newest {KEEP}.
+          Logos and pictures you uploaded are not part of a backup; upload them again if you ever move to a new computer.
+        </p>
+        <p className="text-sm">{last ? <>Last backup: <b>{dateTime(last.at)}</b></> : <span className="text-warn">No backup yet.</span>}</p>
+        <ActionForm action={backupNowAction} success="Backup saved">
+          <button className={btnPrimaryCls}><DatabaseBackup className="size-4" aria-hidden /> Back up now</button>
+        </ActionForm>
+      </section>
+
+      <ActionForm action={saveBackupFolderAction} success="Saved" className={`${cardCls} flex flex-col gap-3 p-6`}>
+        <h2 className="font-display text-xl font-semibold">Second folder</h2>
+        <p className="max-w-prose text-sm text-mute">
+          A copy on the same computer is lost if the computer is. Type the folder of a USB drive or a cloud-synced folder (like OneDrive) and every backup is copied there too.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-72 flex-1">
+            <label className={labelCls} htmlFor="bfolder">Folder</label>
+            <input id="bfolder" name="folder" defaultValue={second} maxLength={260} placeholder="e.g. E:\LoungeBackups (empty = none)" className={inputCls} />
+          </div>
+          <button className={btnCls}>Save folder</button>
+        </div>
+      </ActionForm>
+
+      <section className={`${cardCls} overflow-x-auto`}>
+        <h2 className="px-6 pt-5 font-display text-xl font-semibold">Restore</h2>
+        <p className="px-6 pb-3 pt-1 text-sm text-mute">Pick a backup to go back to. Newest first.</p>
+        {main.length + other.length === 0 ? (
+          <p className="px-6 pb-6 text-sm text-mute">No backups yet. Press &quot;Back up now&quot;.</p>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs uppercase tracking-wider text-mute">
+              <tr className="border-y border-line">
+                <th className="px-4 py-3 font-medium">Saved</th>
+                <th className="px-4 py-3 font-medium">Kind</th>
+                <th className="px-4 py-3 font-medium">Where</th>
+                <th className="px-4 py-3 text-right font-medium">Size</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {main.map((f) => <Row key={`m-${f.name}`} f={f} from="main" />)}
+              {other.filter((f) => !main.some((m) => m.name === f.name)).map((f) => <Row key={`s-${f.name}`} f={f} from="second" />)}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </div>
+  );
+}

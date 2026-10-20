@@ -1,0 +1,291 @@
+@import "tailwindcss";
+
+/* The accent colour is used sparingly: buttons, the active sidebar item, selected chips, focus rings, small highlights and the live-session card.
+   Surfaces (panels, dialogs, inputs, borders) stay neutral. The root layout sets --color-brand and --color-on-brand from the "accent" cookie.
+   Light theme is the base. Dark overrides follow (system preference, or forced by the theme cookie). */
+@theme {
+  --color-brand: #3dbda7;
+  --color-on-brand: #ffffff;
+  --color-brand-hi: color-mix(in srgb, var(--color-brand) 78%, white);
+  --color-brand-text: color-mix(in oklab, var(--color-brand) 62%, black);
+  --color-canvas: #e9e5df;
+  --color-bg: #f5f2ef;
+  --color-panel: #fffdfb;
+  --color-panel-deep: #f8f5f1;
+  --color-raised: #ece8e2;
+  --color-line: #d9d3ca;
+  --color-ink: #1a1c1e;
+  --color-silver: #3d4045;
+  --color-mute: #5c6169;
+  --color-free: #15803d;
+  --color-warn: #b45309;
+  --color-over: #be123c;
+  --color-paused: #5b6b82;
+  --color-plate: #0b0d0f;
+  --font-display: var(--font-chakra), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "Cascadia Code", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-brand-hi: color-mix(in srgb, var(--color-brand) 78%, white);
+    --color-brand-text: color-mix(in oklab, var(--color-brand) 78%, white);
+    --color-canvas: #141518;
+    --color-bg: #1d1e22;
+    --color-panel: #25272c;
+    --color-panel-deep: #212328;
+    --color-raised: #2e3137;
+    --color-line: #3a3d44;
+    --color-ink: #f2f5f7;
+    --color-silver: #cfd5dc;
+    --color-mute: #9aa3ad;
+    --color-free: #34d399;
+    --color-warn: #fbbf24;
+    --color-over: #fb7185;
+    --color-paused: #94a3b8;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"],
+.force-dark {
+  --color-brand-text: color-mix(in oklab, var(--color-brand) 78%, white);
+  --color-canvas: #141518;
+  --color-bg: #1d1e22;
+  --color-panel: #25272c;
+  --color-panel-deep: #212328;
+  --color-raised: #2e3137;
+  --color-line: #3a3d44;
+  --color-ink: #f2f5f7;
+  --color-silver: #cfd5dc;
+  --color-mute: #9aa3ad;
+  --color-free: #34d399;
+  --color-warn: #fbbf24;
+  --color-over: #fb7185;
+  --color-paused: #94a3b8;
+  color-scheme: dark;
+}
+
+:root:not([data-theme="dark"]) {
+  color-scheme: light;
+}
+
+/* Pages that are always dark (login): put class="force-dark" on the wrapper. */
+.force-dark {
+  color: var(--color-ink);
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Feature cards (live session, today): always a deep accent gradient with white text, in both themes. */
+.hero-bg {
+  color: #fff;
+  background:
+    radial-gradient(60% 90% at 85% 10%, color-mix(in oklab, var(--color-brand) 34%, transparent), transparent 70%),
+    linear-gradient(135deg, color-mix(in oklab, var(--color-brand) 40%, #0c0f0f), color-mix(in oklab, var(--color-brand) 16%, #0c0f0f));
+}
+
+/* Station cards: a soft light in the top corner, coloured by status (--glow). */
+.card-glow {
+  background-image: radial-gradient(120% 70% at 100% 0%, color-mix(in oklab, var(--glow, var(--color-brand)) 12%, transparent), transparent 60%);
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .live-dot {
+    animation: pulse-dot 1.6s ease-in-out infinite;
+  }
+}
+
+/* Collapsible sidebar (desktop only). data-collapsed on .shell switches between the full and the icon-only sidebar. */
+.shell {
+  --side: 12.5rem;
+}
+
+.shell[data-collapsed="true"] {
+  --side: 5.5rem;
+}
+
+@media (min-width: 1280px) {
+  .shell {
+    grid-template-columns: var(--side) minmax(0, 1fr);
+  }
+  .shell[data-collapsed="true"] .side {
+    padding: 1rem 0.75rem;
+  }
+  .shell[data-collapsed="true"] .side-label,
+  .shell[data-collapsed="true"] .side-user {
+    display: none;
+  }
+  .shell[data-collapsed="true"] .side-logo-wide {
+    display: none;
+  }
+  .side-logo-icon {
+    display: none;
+  }
+  .shell[data-collapsed="true"] .side-logo-icon {
+    display: grid;
+  }
+  .shell[data-collapsed="true"] .side-link {
+    justify-content: center;
+    padding: 0;
+    height: 3rem;
+    width: 3rem;
+    margin-inline: auto;
+  }
+  .shell[data-collapsed="true"] .side-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .shell {
+    transition: grid-template-columns 0.25s ease;
+  }
+  .side-chevron {
+    transition: transform 0.25s ease;
+  }
+}
+
+dialog {
+  color: inherit;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(2px);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.98);
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(2.5rem);
+  }
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+dialog[open] {
+  animation: dialog-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+dialog[open][data-side] {
+  animation-name: drawer-in;
+  animation-duration: 0.24s;
+}
+
+dialog[open]::backdrop {
+  animation: backdrop-in 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog[open],
+  dialog[open]::backdrop {
+    animation: none;
+  }
+}
+
+@media print {
+  /* Paper is white: use the light palette whatever theme is on screen (three :root for the weight to beat the dark-theme rules). */
+  :root:root:root {
+    color-scheme: light;
+    --color-canvas: #ffffff;
+    --color-bg: #ffffff;
+    --color-panel: #ffffff;
+    --color-panel-deep: #f8f5f1;
+    --color-raised: #ece8e2;
+    --color-line: #cfc8bd;
+    --color-ink: #1a1c1e;
+    --color-silver: #3d4045;
+    --color-mute: #5c6169;
+    --color-free: #15803d;
+    --color-warn: #b45309;
+    --color-over: #be123c;
+    --color-brand-text: color-mix(in oklab, var(--color-brand) 62%, black);
+  }
+  /* Browsers leave backgrounds out of a printout unless told not to: without this the bars, rings and heatmap squares vanish. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body {
+    background: white;
+    color: black;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Scrollbars follow the theme: a slim rounded thumb in the accent colour (softer until hovered) on a see-through track. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-brand) 45%, transparent);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active {
+  background: var(--color-brand);
+  background-clip: padding-box;
+}
+
+/* Firefox has no pseudo-elements: the standard properties give the same slim, accent-coloured bar. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--color-brand) 60%, transparent) transparent;
+  }
+}
+
+@media (min-width: 1280px) {
+  .shell[data-collapsed="true"] .side-badge {
+    top: 0.25rem;
+    right: 0.25rem;
+    transform: none;
+  }
+}

@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Level 9 Floor – Mockup</title>
+<!-- Standalone design mockup. Not wired to the app. Open this file in a browser; it needs internet for Tailwind and fonts.
+     The logo is read from ../public/brand/, so keep the file in this folder. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<style type="text/tailwindcss">
+  @theme inline {
+    --font-display: "Poppins", ui-sans-serif, system-ui, sans-serif;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --color-canvas: #141518;
+    --color-base: #1d1e22;
+    --color-accent: var(--accent);
+    --color-accent-dim: var(--accent-dim);
+    --color-accent-text: var(--accent-text);
+    --color-on-accent: var(--on-accent);
+    --color-panel: var(--panel);
+    --color-panel-deep: var(--panel-deep);
+    --color-free: #34d399;
+    --color-warn: #fbbf24;
+    --color-over: #fb7185;
+  }
+</style>
+<style>
+  /* One colour drives the whole theme. JS only sets --accent and --on-accent; the rest is derived here. */
+  :root {
+    --accent: #3dbda7;
+    --on-accent: #06100e;
+    --accent-dim: color-mix(in oklab, var(--accent) 62%, black);
+    --accent-text: color-mix(in oklab, var(--accent) 78%, white);
+    --panel: color-mix(in oklab, var(--accent) 26%, #0c0f0f);
+    --panel-deep: color-mix(in oklab, var(--accent) 12%, #131518);
+    color-scheme: dark;
+  }
+  .hero-bg {
+    background:
+      radial-gradient(60% 90% at 85% 10%, color-mix(in oklab, var(--accent) 55%, transparent), transparent 70%),
+      linear-gradient(135deg, color-mix(in oklab, var(--accent) 48%, #0c0f0f), color-mix(in oklab, var(--accent) 22%, #0c0f0f));
+  }
+  /* Station cards: a soft accent glow in the top corner so they don't read as flat boxes */
+  .card-glow { background-image: radial-gradient(120% 70% at 100% 0%, color-mix(in oklab, var(--glow, var(--accent)) 22%, transparent), transparent 60%); }
+  summary::-webkit-details-marker { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+  @keyframes pulse-dot { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: no-preference) { .live-dot { animation: pulse-dot 1.6s ease-in-out infinite; } }
+
+  /* Collapsible sidebar (desktop only). data-collapsed on .shell switches between full and icon-only. */
+  .shell { --side: 12.5rem; }
+  .shell[data-collapsed="true"] { --side: 5.5rem; }
+  @media (min-width: 1280px) {
+    .shell { grid-template-columns: var(--side) minmax(0, 1fr); }
+    .shell[data-collapsed="true"] .side { padding: 1rem .75rem; }
+    .shell[data-collapsed="true"] .side-label,
+    .shell[data-collapsed="true"] .side-user { display: none; }
+    .shell[data-collapsed="true"] .side-logo { margin-inline: auto; align-self: center; }
+    .shell[data-collapsed="true"] .side-link { justify-content: center; padding: 0; height: 3rem; width: 3rem; margin-inline: auto; }
+    .shell[data-collapsed="true"] .side-chevron { transform: rotate(180deg); }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .shell { transition: grid-template-columns .25s ease; }
+    .side-chevron { transition: transform .25s ease; }
+  }
+</style>
+</head>
+<body class="min-h-dvh bg-canvas font-sans text-white antialiased">
+
+<!-- icon sprite -->
+<svg width="0" height="0" class="absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.5c3 0 5 1.5 5 4.5"/></symbol>
+    <symbol id="i-cup" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h12v6a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5z"/><path d="M17 10h2a2 2 0 0 1 0 4h-2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M13 5v4M7 15v4"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m16 8 4 4-4 4M20 12H9"/></symbol>
+    <symbol id="i-chevrons" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8.5 5.5v13M15.5 5.5v13"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17.2h.01"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.6 0 2.2-1.1 1.6-2.1s-.4-2 1.1-2H17a4 4 0 0 0 4-4c0-5-4-9.9-9-9.9z"/><circle cx="7.5" cy="11" r=".8" fill="currentColor"/><circle cx="10" cy="7" r=".8" fill="currentColor"/><circle cx="15" cy="7.5" r=".8" fill="currentColor"/></symbol>
+    <symbol id="i-pad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10a4 4 0 0 1 4 4v1a3 3 0 0 1-5.2 2L14.5 14h-5l-1.3 1A3 3 0 0 1 3 13v-1a4 4 0 0 1 4-4z"/><path d="M8 10.5v3M6.5 12h3M15.5 11.5h.01M17.5 12.8h.01"/></symbol>
+    <symbol id="i-pool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3.2"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2.5"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-wheel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/><path d="M12 3v6.6M3.6 14.5l6.1-1.6M20.4 14.5l-6.1-1.6"/></symbol>
+  </defs>
+</svg>
+
+<div id="shell" class="shell mx-auto my-2 w-[calc(100%-1rem)] max-w-[110rem] rounded-4xl bg-base p-3 sm:my-3 sm:w-[calc(100%-1.5rem)] sm:p-4 xl:grid xl:gap-6">
+
+  <!-- SIDEBAR: top bar on small screens, full or collapsed sidebar from 1280px -->
+  <nav id="side" aria-label="Main" class="side mb-4 flex items-center justify-between gap-2 rounded-4xl xl:overflow-y-auto bg-panel p-3 xl:sticky xl:top-3 xl:mb-0 xl:h-[calc(100dvh-2.5rem)] xl:flex-col xl:items-stretch xl:justify-start xl:gap-0 xl:p-4">
+    <a href="#" aria-label="Level 9 Gaming Lounge, home" class="side-logo block size-10 sm:size-12 shrink-0 overflow-hidden rounded-full bg-black ring-1 ring-white/15 xl:ml-0.5 xl:self-start">
+      <img src="../public/brand/logo-hero.png" alt="Level 9 Gaming Lounge" width="1170" height="939" class="size-full object-cover object-[50%_58%]">
+    </a>
+
+    <ul class="flex items-center gap-1 xl:mt-6 xl:flex-col xl:items-stretch xl:gap-1.5">
+      <li><a href="#" aria-current="page" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl bg-accent font-medium text-on-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-grid"/></svg><span class="side-label hidden xl:inline">Floor</span><span class="sr-only xl:hidden">Floor</span></a></li>
+      <li><a href="#" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-receipt"/></svg><span class="side-label hidden xl:inline">Bills</span><span class="sr-only xl:hidden">Bills</span></a></li>
+      <li><a href="#" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-users"/></svg><span class="side-label hidden xl:inline">Customers</span><span class="sr-only xl:hidden">Customers</span></a></li>
+      <li><a href="#" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-cup"/></svg><span class="side-label hidden xl:inline">Menu &amp; stock</span><span class="sr-only xl:hidden">Menu and stock</span></a></li>
+      <li><a href="#" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-sliders"/></svg><span class="side-label hidden xl:inline">Settings</span><span class="sr-only xl:hidden">Settings</span></a></li>
+    </ul>
+
+    <div class="flex items-center gap-1 xl:mt-auto xl:flex-col xl:items-stretch xl:gap-1.5">
+      <button id="sideToggle" type="button" aria-controls="side" aria-expanded="true" aria-label="Collapse sidebar" class="side-link hidden items-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:flex xl:px-3.5 xl:py-2.5"><svg class="side-chevron size-5 shrink-0"><use href="#i-chevrons"/></svg><span class="side-label">Collapse</span></button>
+      <div class="hidden border-t border-white/10 xl:my-2 xl:block"></div>
+      <p class="side-user hidden px-3.5 xl:block"><span class="block font-semibold">Gabor</span><span class="text-sm text-white/60">Owner</span></p>
+      <button type="button" class="side-link flex size-10 sm:size-11 items-center justify-center gap-3 rounded-2xl text-white/75 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-accent xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5"><svg class="size-5 shrink-0"><use href="#i-logout"/></svg><span class="side-label hidden xl:inline">Sign out</span><span class="sr-only xl:hidden">Sign out</span></button>
+    </div>
+  </nav>
+
+  <main class="min-w-0">
+    <!-- HEADER -->
+    <header class="mb-6 flex flex-wrap items-center gap-3">
+      <div>
+        <h1 class="font-display text-2xl font-semibold sm:text-3xl">Hi, <span class="text-accent-text">Gabor</span></h1>
+        <p class="text-sm text-white/55">Level 9 Gaming Lounge · Tue, 6 Oct · <span id="clock" class="tabular-nums">11:43 am</span></p>
+      </div>
+      <div class="ml-auto flex items-center gap-2">
+        <button type="button" aria-label="Notifications (2)" class="relative grid size-11 shrink-0 place-items-center rounded-full bg-panel text-white/85 transition hover:bg-accent-dim focus-visible:outline-2 focus-visible:outline-accent">
+          <svg class="size-5"><use href="#i-bell"/></svg><span class="absolute right-2.5 top-2.5 size-2 rounded-full bg-over"></span>
+        </button>
+
+        <!-- Theme colour picker -->
+        <details id="themeMenu" class="relative">
+          <summary aria-label="Theme colour" class="grid size-11 cursor-pointer list-none place-items-center rounded-full bg-panel text-white/85 transition hover:bg-accent-dim focus-visible:outline-2 focus-visible:outline-accent"><svg class="size-5"><use href="#i-palette"/></svg></summary>
+          <div class="absolute right-0 top-full z-20 mt-2 w-72 rounded-3xl border border-white/10 bg-panel-deep p-5 shadow-2xl">
+            <fieldset>
+              <legend class="mb-3 text-sm font-semibold">Main colour</legend>
+              <div id="swatches" class="grid grid-cols-4 gap-3"></div>
+            </fieldset>
+            <label class="mt-5 flex items-center justify-between gap-3 text-sm">
+              <span>Custom</span>
+              <span class="flex items-center gap-2">
+                <output id="hexOut" class="font-mono text-xs text-white/70">#3DBDA7</output>
+                <input id="picker" type="color" value="#3dbda7" class="size-9 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5">
+              </span>
+            </label>
+            <button id="reset" type="button" class="mt-5 w-full rounded-full border border-white/20 py-2 text-sm font-medium transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-accent">Reset to default</button>
+          </div>
+        </details>
+
+        <button type="button" class="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-on-accent transition hover:bg-accent-dim hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><svg class="size-4"><use href="#i-plus"/></svg>Start session</button>
+      </div>
+    </header>
+
+    <!-- ROW 1: live session + today -->
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+
+      <section aria-labelledby="hero-t" class="hero-bg relative isolate flex overflow-hidden rounded-4xl p-5 sm:p-8">
+        <svg aria-hidden="true" class="pointer-events-none absolute -right-6 -top-4 -z-10 size-72 rotate-12 text-white/9 sm:size-80"><use href="#i-pad"/></svg>
+        <div class="flex flex-1 flex-col lg:justify-center">
+          <div class="flex flex-wrap items-center gap-2 text-xs font-medium">
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-on-accent"><span class="live-dot size-1.5 rounded-full bg-current"></span>Live now</span>
+            <span class="rounded-full bg-black/25 px-3 py-1">PS5 Zone</span>
+            <span class="rounded-full bg-black/25 px-3 py-1">Fixed · 60 min</span>
+            <span class="rounded-full bg-black/25 px-3 py-1">2 × Coke · ₹80</span>
+          </div>
+          <h2 id="hero-t" class="mt-4 font-display text-3xl font-semibold sm:text-4xl">PS5 1</h2>
+          <p class="mt-1 text-sm text-white/75">Walk-in · 2 players · ₹150/hr · started 10:44 am</p>
+
+          <div class="mt-8 flex flex-wrap items-end justify-between gap-4">
+            <div class="flex w-full flex-wrap items-end gap-x-10 gap-y-2">
+              <div>
+                <p class="text-xs uppercase tracking-widest text-white/65">Time left</p>
+                <p class="font-display text-5xl font-semibold tabular-nums sm:text-6xl" data-timer="down" data-sec="3545" data-total="3600" data-ring="heroRing">0:59:05</p>
+              </div>
+              <div class="pb-1.5">
+                <p class="text-xs uppercase tracking-widest text-white/65">So far</p>
+                <p class="font-display text-3xl font-semibold">₹117.50</p>
+              </div>
+            </div>
+            <div class="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto">
+              <button type="button" class="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white px-3 sm:px-5 text-sm font-semibold text-neutral-900 transition hover:bg-white/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><svg class="size-4"><use href="#i-pause"/></svg>Pause</button>
+              <button type="button" class="h-11 rounded-full bg-black/30 px-3 sm:px-4 text-sm font-semibold transition hover:bg-black/45 focus-visible:outline-2 focus-visible:outline-white">+15 min</button>
+              <button type="button" class="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/40 px-3 sm:px-4 text-sm font-semibold transition hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-white"><svg class="size-4"><use href="#i-stop"/></svg>Stop</button>
+            </div>
+          </div>
+        </div>
+        <div class="relative ml-4 hidden shrink-0 sm:block">
+          <svg viewBox="0 0 100 100" class="size-24 -rotate-90" role="img" aria-label="Session progress">
+            <circle cx="50" cy="50" r="42" fill="none" stroke="rgb(255 255 255 / .18)" stroke-width="8"/>
+            <circle id="heroRing" cx="50" cy="50" r="42" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-dasharray="263.9" stroke-dashoffset="0"/>
+          </svg>
+        </div>
+      </section>
+
+      <section aria-labelledby="td-t" class="hero-bg grid gap-4 rounded-4xl p-5 sm:grid-cols-[1fr_auto] sm:items-center sm:gap-x-8 sm:p-8 lg:flex lg:flex-col lg:items-stretch">
+        <div><p class="text-sm font-medium text-white/80">Today</p>
+        <h2 id="td-t" class="font-display text-3xl font-semibold">₹4,250</h2>
+        <p class="mt-1 text-sm text-white/75">11 bills · cash ₹1,900 · UPI ₹2,350</p></div>
+        <figure class="sm:col-start-2 sm:row-span-2 sm:row-start-1 lg:my-3 lg:flex-1">
+          <svg viewBox="-12 0 224 195" class="mx-auto w-full max-w-44" role="img" aria-label="Zone usage today: Pool 70%, PS5 90%, PC 55%, Sim 40%, VR 65%">
+            <g fill="none" stroke="rgb(255 255 255 / .25)">
+              <polygon points="100,20 176.1,75.3 147,164.7 53,164.7 23.9,75.3"/>
+              <polygon points="100,47.2 150.2,83.7 131,142.7 69,142.7 49.8,83.7"/>
+              <polygon points="100,73.6 125.1,91.9 115.5,121.4 84.5,121.4 74.9,91.9"/>
+              <path d="M100 100V20M100 100l76.1-24.7M100 100l47 64.7M100 100l-47 64.7M100 100 23.9 75.3"/>
+            </g>
+            <polygon points="100,44 168.5,77.8 125.9,135.6 81.2,125.9 50.5,83.9" fill="white" fill-opacity=".28" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+            <g fill="white" font-size="14" font-family="Inter, sans-serif">
+              <text x="100" y="11" text-anchor="middle">Pool</text>
+              <text x="184" y="78">PS5</text>
+              <text x="152" y="183" text-anchor="middle">PC</text>
+              <text x="48" y="183" text-anchor="middle">Sim</text>
+              <text x="16" y="78" text-anchor="end">VR</text>
+            </g>
+          </svg>
+          <figcaption class="text-center text-xs text-white/70">Zone usage today</figcaption>
+        </figure>
+        <button type="button" class="mx-auto inline-flex sm:mx-0 sm:self-start sm:justify-self-start lg:mx-auto lg:self-auto lg:justify-self-auto h-11 items-center gap-2 rounded-full bg-white px-6 text-sm font-semibold text-neutral-900 transition hover:bg-white/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Full report</button>
+      </section>
+    </div>
+
+    <!-- ROW 2: stations (overtime and ending-soon cards float to the top, so there is no separate "needs attention" list) -->
+    <section aria-labelledby="st-t" class="mt-8 min-w-0">
+      <div class="mb-4 flex flex-wrap items-center gap-3">
+        <h2 id="st-t" class="font-display text-xl font-semibold">Stations <span class="ml-1 text-base font-normal text-white/55">4 of 8 in use · <span class="text-warn">2 need attention</span></span></h2>
+        <div id="chips" class="ml-auto flex gap-2 overflow-x-auto text-sm no-scrollbar" role="group" aria-label="Filter by zone"></div>
+      </div>
+      <ul id="stations" class="grid grid-cols-1 gap-5 min-[560px]:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"></ul>
+    </section>
+  </main>
+</div>
+
+<script>
+  const PRESETS = [
+    ["Teal", "#3dbda7"], ["Level 9 red", "#d4121c"], ["Violet", "#8b5cf6"], ["Blue", "#3b82f6"],
+    ["Amber", "#f59e0b"], ["Lime", "#84cc16"], ["Pink", "#ec4899"], ["Orange", "#f97316"],
+  ];
+  const DEFAULT = PRESETS[0][1];
+  const root = document.documentElement;
+  const picker = document.getElementById("picker");
+  const hexOut = document.getElementById("hexOut");
+  const box = document.getElementById("swatches");
+
+  // WCAG relative luminance: pick black or white text, whichever contrasts more with the accent.
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+
+  function setAccent(hex) {
+    root.style.setProperty("--accent", hex);
+    root.style.setProperty("--on-accent", luminance(hex) > 0.179 ? "#06100e" : "#ffffff");
+    picker.value = hex;
+    hexOut.textContent = hex.toUpperCase();
+    box.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hex === hex)));
+    try { localStorage.setItem("lounge-accent", hex); } catch {}
+  }
+
+  for (const [name, hex] of PRESETS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.hex = hex;
+    b.setAttribute("aria-label", name);
+    b.title = name;
+    b.className = "aspect-square rounded-full ring-2 ring-transparent ring-offset-2 ring-offset-[#0c0f0f] transition hover:scale-105 focus-visible:outline-2 focus-visible:outline-white aria-pressed:ring-white";
+    b.style.background = hex;
+    b.onclick = () => setAccent(hex);
+    box.append(b);
+  }
+  picker.oninput = () => setAccent(picker.value);
+  document.getElementById("reset").onclick = () => setAccent(DEFAULT);
+
+  let saved = null;
+  try { saved = localStorage.getItem("lounge-accent"); } catch {}
+  const fromUrl = new URLSearchParams(location.search).get("accent"); // e.g. ?accent=%23d4121c to preview a colour
+  const pick = [fromUrl, saved].find((v) => /^#[0-9a-f]{6}$/i.test(v ?? ""));
+  setAccent(pick ? pick.toLowerCase() : DEFAULT);
+
+  // close the colour menu when clicking elsewhere or pressing Esc
+  const menu = document.getElementById("themeMenu");
+  document.addEventListener("click", (e) => { if (!menu.contains(e.target)) menu.open = false; });
+  menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { menu.open = false; menu.querySelector("summary").focus(); } });
+
+  // ---- collapsible sidebar (desktop); choice is remembered ----
+  const shell = document.getElementById("shell");
+  const toggle = document.getElementById("sideToggle");
+  function setCollapsed(on) {
+    shell.dataset.collapsed = String(on);
+    toggle.setAttribute("aria-expanded", String(!on));
+    toggle.setAttribute("aria-label", on ? "Expand sidebar" : "Collapse sidebar");
+    try { localStorage.setItem("lounge-side-collapsed", on ? "1" : "0"); } catch {}
+  }
+  toggle.onclick = () => setCollapsed(shell.dataset.collapsed !== "true");
+  let sideSaved = null;
+  try { sideSaved = localStorage.getItem("lounge-side-collapsed"); } catch {}
+  setCollapsed(new URLSearchParams(location.search).get("collapsed") === "1" || sideSaved === "1");
+
+  // ---- stations (demo data) ----
+  const ICON = { Pool: "i-pool", PS5: "i-pad", PC: "i-monitor", Sim: "i-wheel" };
+  const ZONE = { Pool: "Pool Tables", PS5: "PS5 Zone", PC: "PC Gaming", Sim: "Sim Racing" };
+  // glow = the card's top-corner light; chip = status pill; ring = border
+  const STATUS = {
+    running: { text: "Running",     chip: "bg-accent/20 text-accent-text", ring: "ring-white/10", bg: "bg-panel",      glow: "var(--accent)" },
+    ending:  { text: "Ending soon", chip: "bg-warn/15 text-warn",          ring: "ring-white/10",   bg: "bg-panel",      glow: "#fbbf24" },
+    over:    { text: "Overtime",    chip: "bg-over/15 text-over",          ring: "ring-white/10",   bg: "bg-panel",      glow: "#fb7185" },
+    free:    { text: "Free",        chip: "bg-free/15 text-free",          ring: "ring-white/10",  bg: "bg-panel-deep", glow: "#34d399" },
+    maint:   { text: "Maintenance", chip: "bg-white/10 text-white/60",     ring: "ring-white/10",  bg: "bg-panel-deep", glow: "#94a3b8" },
+  };
+  const ORDER = { over: 0, ending: 1, running: 2, free: 3, maint: 4 }; // attention first
+  const STATIONS = [
+    { name: "Pool 1", zone: "Pool", st: "running", mode: "up",   sec: 3790, label: "elapsed", plan: "Open · ₹150/hr",     who: "Walk-in",   players: 2, amt: "₹157.50", items: 0 },
+    { name: "Pool 2", zone: "Pool", st: "free", rate: "₹150/hr" },
+    { name: "PS5 1",  zone: "PS5",  st: "running", mode: "down", sec: 3545, total: 3600, label: "left", plan: "Fixed 60 min · ₹150/hr", who: "Walk-in", players: 2, amt: "₹117.50", items: 2 },
+    { name: "PS5 2",  zone: "PS5",  st: "free", rate: "₹150/hr" },
+    { name: "PC 1",   zone: "PC",   st: "free", rate: "₹130/hr" },
+    { name: "PC 2",   zone: "PC",   st: "ending",  mode: "down", sec: 294,  total: 3600, label: "left", plan: "Fixed 60 min · ₹130/hr", who: "Walk-in", players: 1, amt: "₹98.00", items: 1 },
+    { name: "Sim 1",  zone: "Sim",  st: "over",    time: "+0:03",           label: "over time", bar: 100, plan: "Fixed 60 min · ₹150/hr", who: "Rahul", players: 1, amt: "₹302.00", items: 0 },
+    { name: "Sim 2",  zone: "Sim",  st: "maint", rate: "₹150/hr" },
+  ];
+  const initials = (n) => n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const act = "inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition focus-visible:outline-2 focus-visible:outline-accent";
+
+  const list = document.getElementById("stations");
+  const render = (zone) => {
+    const rows = STATIONS.filter((s) => zone === "All" || s.zone === zone).sort((a, b) => ORDER[a.st] - ORDER[b.st]);
+    list.innerHTML = rows.map((s, i) => {
+      const t = STATUS[s.st];
+      const busy = s.st === "running" || s.st === "ending" || s.st === "over";
+      const id = `bar${i}`;
+      const head = `<div class="flex items-start justify-between gap-3"><div class="flex min-w-0 items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-2xl bg-base text-accent-text"><svg class="size-6"><use href="#${ICON[s.zone]}"/></svg></span><div class="min-w-0"><h3 class="truncate font-display text-lg font-semibold leading-tight">${s.name}</h3><p class="truncate text-xs text-white/60">${ZONE[s.zone]}</p></div></div><span class="shrink-0 rounded-full px-3 py-1 text-xs font-medium ${t.chip}">${t.text}</span></div>`;
+      let body;
+      if (busy) {
+        const timer = s.time ?? `<span data-timer="${s.mode}" data-sec="${s.sec}"${s.total ? ` data-total="${s.total}" data-bar="${id}"` : ""}></span>`;
+        const bar = s.total || s.bar
+          ? `<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10" role="presentation"><div id="${id}" class="h-full rounded-full ${s.st === "over" ? "bg-over" : s.st === "ending" ? "bg-warn" : "bg-accent"}" style="width:${s.bar ?? 0}%"></div></div>`
+          : `<div class="mt-3 h-1.5 rounded-full bg-white/10" role="presentation"></div>`;
+        body = `<div class="mt-5 flex items-end justify-between gap-3"><div><p class="font-display text-4xl font-semibold leading-none tabular-nums">${timer}</p><p class="mt-1 text-xs text-white/60">${s.label} · ${s.plan}</p></div></div>${bar}
+          <div class="mt-4 flex items-center gap-3 border-t border-white/10 pt-4 text-sm"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-white/15 text-xs font-semibold">${s.who === "Walk-in" ? "W" : initials(s.who)}</span><span class="min-w-0 flex-1 leading-snug text-white/80">${s.who} · ${s.players} ${s.players > 1 ? "players" : "player"}${s.items ? ` · ${s.items} item${s.items > 1 ? "s" : ""}` : ""}</span><span class="font-display text-lg font-semibold">${s.amt}</span></div>
+          <div class="mt-4 flex gap-2"><button type="button" class="${act} flex-1 bg-black/25 hover:bg-black/40"><svg class="size-3.5"><use href="#i-pause"/></svg>Pause</button><button type="button" class="${act} flex-1 ${s.st === "running" ? "bg-black/25 hover:bg-black/40" : "bg-accent text-on-accent hover:bg-accent-dim hover:text-white"}">+15 min</button><button type="button" class="${act} flex-1 border border-white/25 hover:bg-white/10"><svg class="size-3.5"><use href="#i-stop"/></svg>Stop</button></div>`;
+      } else if (s.st === "free") {
+        body = `<div class="mt-5"><p class="font-display text-4xl font-semibold leading-none text-white/35">0:00:00</p><p class="mt-1 text-xs text-white/60">Ready · ${s.rate}</p></div><div class="mt-3 h-1.5 rounded-full bg-white/10" role="presentation"></div><button type="button" class="mt-auto inline-flex h-11 items-center justify-center gap-2 rounded-full bg-accent text-sm font-semibold text-on-accent transition hover:bg-accent-dim hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><svg class="size-4"><use href="#i-play"/></svg>Start session</button>`;
+      } else {
+        body = `<div class="mt-5"><p class="font-display text-4xl font-semibold leading-none text-white/35">—</p><p class="mt-1 text-xs text-white/60">Out of service · ${s.rate}</p></div><div class="mt-3 h-1.5 rounded-full bg-white/10" role="presentation"></div><button type="button" disabled class="mt-auto inline-flex h-11 items-center justify-center rounded-full border border-white/15 text-sm font-medium text-white/50">Under maintenance</button>`;
+      }
+      const pad = body.includes("mt-auto") ? "pt-6" : "";
+      return `<li><article style="--glow:${t.glow}" class="card-glow relative flex h-full min-h-72 flex-col overflow-hidden rounded-3xl p-5 ring-1 ${t.ring} ${t.bg} ${s.st === "maint" ? "opacity-70" : ""}"><svg aria-hidden="true" class="pointer-events-none absolute -bottom-6 -right-6 size-36 text-white/5"><use href="#${ICON[s.zone]}"/></svg>${head}<div class="relative flex flex-1 flex-col ${pad}">${body}</div></article></li>`;
+    }).join("");
+    tick();
+  };
+  const chips = document.getElementById("chips");
+  ["All", "Pool", "PS5", "PC", "Sim"].forEach((z, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = z;
+    b.setAttribute("aria-pressed", String(i === 0));
+    b.className = "shrink-0 rounded-full bg-panel px-4 py-2 font-medium text-white/80 transition hover:bg-accent-dim focus-visible:outline-2 focus-visible:outline-accent aria-pressed:bg-accent aria-pressed:text-on-accent";
+    b.onclick = () => { chips.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); render(z); };
+    chips.append(b);
+  });
+
+  // ---- demo timers: data-timer="up|down" data-sec=start value; data-ring / data-bar = id of the progress element to update ----
+  const fmt = (s) => { s = Math.max(0, s); const h = Math.floor(s / 3600), m = String(Math.floor(s / 60) % 60).padStart(2, "0"), x = String(s % 60).padStart(2, "0"); return `${h}:${m}:${x}`; };
+  const t0 = Date.now();
+  function tick() {
+    const d = Math.floor((Date.now() - t0) / 1000);
+    for (const el of document.querySelectorAll("[data-timer]")) {
+      const v = el.dataset.timer === "up" ? +el.dataset.sec + d : +el.dataset.sec - d;
+      el.textContent = fmt(v);
+      const used = 1 - Math.max(0, v) / +el.dataset.total;
+      if (el.dataset.ring) document.getElementById(el.dataset.ring).style.strokeDashoffset = 263.9 * (1 - Math.max(0, v) / +el.dataset.total);
+      if (el.dataset.bar) document.getElementById(el.dataset.bar).style.width = `${used * 100}%`;
+    }
+    document.getElementById("clock").textContent = new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+  }
+  setInterval(tick, 1000);
+  render("All");
+</script>
+</body>
+</html>

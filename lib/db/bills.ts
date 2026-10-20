@@ -1,0 +1,285 @@
+import { all, get, run, tx, audit } from "./index.ts";
+import { UserError } from "../errors.ts";
+import { billableMs, chargedMinutes, sessionChargePaise } from "../engine/pricing.ts";
+import { computeBill, validatePayments } from "../engine/bill.ts";
+import type { BillLineInput, Discount, PaymentInput, PaymentMethod } from "../engine/bill.ts";
+import { getSession, listItems } from "./sessions.ts";
+import type { SessionRow } from "./sessions.ts";
+import { getSetting } from "./settings.ts";
+import { deductForBill, getMenuItem, lineTaxPct, restoreForBill } from "./menu.ts";
+import { invoiceNumberFrom } from "../bills-filter.ts";
+import type { BillFilter } from "../bills-filter.ts";
+
+export type Draft = {
+  session: SessionRow;
+  stationName: string;
+  customerName: string | null;
+  playedMs: number;
+  lines: BillLineInput[];
+};
+
+/** What the bill would be right now. For a stopped session this is final; for a running one it is a preview. */
+export function buildDraft(sessionId: number, now: number): Draft {
+  const session = getSession(sessionId);
+  const st = get<{ name: string }>("SELECT name FROM stations WHERE id = ?", session.stationId);
+  const cust = session.customerId
+    ? get<{ name: string }>("SELECT name FROM customers WHERE id = ?", session.customerId)
+    : undefined;
+  const playedMs = billableMs(session, now);
+  const charge = sessionChargePaise(playedMs, session.rate, session.players);
+  const label = `${st?.name ?? "Station"} - ${chargedMinutes(playedMs, session.rate)} min`;
+
+  const lines: BillLineInput[] = [{ kind: "session", name: label, qty: 1, unitPaise: charge, taxPct: lineTaxPct() }];
+  for (const it of listItems(sessionId)) {
+    lines.push({ kind: "item", name: it.name, qty: it.qty, unitPaise: it.unitPaise, taxPct: lineTaxPct(), itemId: it.itemId ?? undefined });
+  }
+  return { session, stationName: st?.name ?? "Station", customerName: cust?.name ?? null, playedMs, lines };
+}
+
+export type FinalizeInput = {
+  sessionId: number;
+  staffId: string;
+  role: "owner" | "staff";
+  discount: Discount;
+  discountReason: string;
+  payments: PaymentInput[]; // collected now; any prepaid advance is added automatically
+  now: number;
+};
+
+export function finalizeBill(i: FinalizeInput): { billId: number; invoiceNo: number; refundPaise: number } {
+  return tx(() => {
+    const s = getSession(i.sessionId);
+    if (s.billed) throw new UserError("This session is already billed");
+    if (s.endedAt === null) throw new UserError("Stop the session before billing it");
+
+    const draft = buildDraft(i.sessionId, s.endedAt);
+    const totals = computeBill(draft.lines, i.discount);
+
+    checkDiscount(totals, i.discountReason, i.role);
+
+    const advanceApplied = s.advanceMethod ? Math.min(s.advancePaise, totals.totalPaise) : 0;
+    const refundPaise = s.advancePaise - advanceApplied;
+    const all_: PaymentInput[] = [
+      ...(advanceApplied > 0 && s.advanceMethod ? [{ method: s.advanceMethod, amountPaise: advanceApplied }] : []),
+      ...i.payments,
+    ];
+    const bad = validatePayments(totals.totalPaise, all_);
+    if (bad) throw new UserError(bad);
+
+    const { billId, invoiceNo } = writeBill({
+      sessionId: s.id, customerId: s.customerId, lines: draft.lines, totals, discountReason: i.discountReason, payments: all_,
+      staffId: i.staffId, now: i.now, audit: `total ${totals.totalPaise}${refundPaise ? ` refund ${refundPaise}` : ""}`,
+    });
+    run("UPDATE sessions SET billed = 1 WHERE id = ?", s.id);
+    return { billId, invoiceNo, refundPaise };
+  });
+}
+
+function checkDiscount(totals: { discountPaise: number; subtotalPaise: number }, reason: string, role: "owner" | "staff"): void {
+  if (totals.discountPaise <= 0) return;
+  if (!reason.trim()) throw new UserError("Give a reason for the discount");
+  if (role === "staff") {
+    const maxPct = Number(getSetting("staff.maxDiscountPct"));
+    // The most staff may give is the cap rounded the same way the discount is, so a discount of exactly 10% is never refused by a fraction of a paisa.
+    if (totals.discountPaise > Math.round((totals.subtotalPaise * maxPct) / 100)) {
+      throw new UserError(`Staff can give at most ${maxPct}% discount. Ask the owner.`);
+    }
+  }
+}
+
+/** The one place a bill is written: next invoice number, header, lines, payments and the stock that leaves. Call inside a transaction. */
+function writeBill(b: {
+  sessionId: number | null;
+  customerId: number | null;
+  lines: BillLineInput[];
+  totals: ReturnType<typeof computeBill>;
+  discountReason: string;
+  payments: PaymentInput[];
+  staffId: string;
+  now: number;
+  audit: string;
+}): { billId: number; invoiceNo: number } {
+  const invoiceNo = (get<{ n: number }>("SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM bills")?.n) ?? 1;
+  const billId = Number(
+    run(
+      `INSERT INTO bills (invoice_no, session_id, customer_id, staff_id, subtotal_paise, discount_paise, discount_reason,
+                          tax_paise, total_paise, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      invoiceNo, b.sessionId, b.customerId, b.staffId, b.totals.subtotalPaise, b.totals.discountPaise, b.discountReason.trim(),
+      b.totals.taxPaise, b.totals.totalPaise, b.now,
+    ).lastInsertRowid,
+  );
+  for (const l of b.lines) {
+    run("INSERT INTO bill_lines (bill_id, kind, name, qty, unit_paise, tax_pct, item_id) VALUES (?,?,?,?,?,?,?)", billId, l.kind, l.name, l.qty, l.unitPaise, l.taxPct, l.itemId ?? null);
+  }
+  for (const p of b.payments) run("INSERT INTO payments (bill_id, method, amount_paise) VALUES (?,?,?)", billId, p.method, p.amountPaise);
+  deductForBill(billId, b.staffId, b.now);
+  audit(b.staffId, b.sessionId === null ? "bill.counter" : "bill.create", `INV-${invoiceNo} ${b.audit}`, b.now);
+  return { billId, invoiceNo };
+}
+
+export type CounterLine = { itemId: number; qty: number };
+
+/** Turn picked menu items into bill lines at today's prices and tax rates. Hidden items cannot be sold. */
+export function counterLines(lines: CounterLine[]): BillLineInput[] {
+  if (!Array.isArray(lines) || lines.length === 0) throw new UserError("Add at least one item");
+  const merged = new Map<number, number>();
+  for (const l of lines) {
+    if (!Number.isInteger(l.itemId) || !Number.isInteger(l.qty) || l.qty < 1 || l.qty > 99) throw new UserError("Quantity must be between 1 and 99");
+    merged.set(l.itemId, (merged.get(l.itemId) ?? 0) + l.qty);
+  }
+  return [...merged].map(([itemId, qty]) => {
+    const m = getMenuItem(itemId);
+    if (!m || !m.active) throw new UserError("An item you picked is not on the menu any more");
+    if (qty > 99) throw new UserError(`${m.name}: at most 99 at a time`);
+    return { kind: "item" as const, name: m.name, qty, unitPaise: m.pricePaise, taxPct: lineTaxPct(), itemId: m.id };
+  });
+}
+
+export type CounterSaleInput = {
+  lines: CounterLine[];
+  staffId: string;
+  role: "owner" | "staff";
+  discount: Discount;
+  discountReason: string;
+  payments: PaymentInput[];
+  now: number;
+};
+
+/** A sale with no session (a drink at the counter). Same discount rules, numbering and payment checks as a session bill. */
+export function finalizeCounterSale(i: CounterSaleInput): { billId: number; invoiceNo: number } {
+  return tx(() => {
+    const lines = counterLines(i.lines);
+    const totals = computeBill(lines, i.discount);
+    checkDiscount(totals, i.discountReason, i.role);
+    const bad = validatePayments(totals.totalPaise, i.payments);
+    if (bad) throw new UserError(bad);
+    return writeBill({
+      sessionId: null, customerId: null, lines, totals, discountReason: i.discountReason, payments: i.payments,
+      staffId: i.staffId, now: i.now, audit: `counter total ${totals.totalPaise}`,
+    });
+  });
+}
+
+export function voidBill(billId: number, reason: string, userId: string, role: "owner" | "staff", now: number): void {
+  if (role !== "owner") throw new UserError("Only the owner can void a bill");
+  if (!reason.trim()) throw new UserError("Give a reason for voiding this bill");
+  tx(() => {
+    const b = get<{ status: string; invoiceNo: number }>("SELECT status, invoice_no AS invoiceNo FROM bills WHERE id = ?", billId);
+    if (!b) throw new UserError("Bill not found");
+    if (b.status === "void") throw new UserError("This bill is already void");
+    run("UPDATE bills SET status = 'void', void_reason = ?, voided_by = ? WHERE id = ?", reason.trim(), userId, billId);
+    restoreForBill(billId, userId, now);
+    audit(userId, "bill.void", `INV-${b.invoiceNo}: ${reason.trim()}`, now);
+  });
+}
+
+export type BillSummary = {
+  id: number;
+  invoiceNo: number;
+  totalPaise: number;
+  status: "paid" | "void";
+  createdAt: number;
+  stationName: string | null;
+  customerName: string | null;
+  methods: PaymentMethod[]; // how it was paid: one or several
+};
+
+const METHOD_ORDER: PaymentMethod[] = ["cash", "upi", "card"];
+
+const BILL_JOINS = `FROM bills b
+     LEFT JOIN sessions s ON s.id = b.session_id
+     LEFT JOIN stations st ON st.id = s.station_id
+     LEFT JOIN customers c ON c.id = b.customer_id`;
+
+/** The WHERE clause for a filter, shared by the list and the count so a page number can never disagree with the total. */
+function billWhere(f: BillFilter): { sql: string; args: (string | number)[] } {
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (f.status) { where.push("b.status = ?"); args.push(f.status); }
+  if (f.method) { where.push("EXISTS (SELECT 1 FROM payments p WHERE p.bill_id = b.id AND p.method = ?)"); args.push(f.method); }
+  if (f.customerId !== undefined) { where.push("b.customer_id = ?"); args.push(f.customerId); }
+  if (f.from !== undefined) { where.push("b.created_at >= ?"); args.push(f.from); }
+  if (f.to !== undefined) { where.push("b.created_at < ?"); args.push(f.to); }
+  if (f.q) {
+    const like = `%${f.q.replace(/[%_!]/g, (c) => `!${c}`)}%`; // ! is the LIKE escape character
+    const inv = invoiceNumberFrom(f.q);
+    where.push(`(${inv !== null ? "b.invoice_no = ? OR " : ""}st.name LIKE ? ESCAPE '!' OR c.name LIKE ? ESCAPE '!' OR (b.session_id IS NULL AND 'counter sale' LIKE ? ESCAPE '!'))`);
+    if (inv !== null) args.push(inv);
+    args.push(like, like, like.toLowerCase());
+  }
+  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", args };
+}
+
+export function countBills(f: BillFilter = {}): number {
+  const w = billWhere(f);
+  return get<{ n: number }>(`SELECT COUNT(*) AS n ${BILL_JOINS} ${w.sql}`, ...w.args)?.n ?? 0;
+}
+
+/** Newest first. Every filter is optional; they combine with AND. A counter sale has no station, so it matches "counter". */
+export function listBills(limit = 50, offset = 0, f: BillFilter = {}): BillSummary[] {
+  const w = billWhere(f);
+  const rows = all<Omit<BillSummary, "methods"> & { methods: string | null }>(
+    `SELECT b.id, b.invoice_no AS invoiceNo, b.total_paise AS totalPaise, b.status, b.created_at AS createdAt,
+            st.name AS stationName, c.name AS customerName,
+            (SELECT GROUP_CONCAT(DISTINCT p.method) FROM payments p WHERE p.bill_id = b.id) AS methods
+     ${BILL_JOINS}
+     ${w.sql}
+     ORDER BY b.id DESC LIMIT ? OFFSET ?`,
+    ...w.args, limit, offset,
+  );
+  return rows.map((r) => ({ ...r, methods: METHOD_ORDER.filter((m) => (r.methods ?? "").split(",").includes(m)) }));
+}
+
+export type BillDetail = BillSummary & {
+  subtotalPaise: number;
+  discountPaise: number;
+  discountReason: string;
+  taxPaise: number;
+  voidReason: string | null;
+  staffId: string;
+  lines: { kind: string; name: string; qty: number; unitPaise: number; taxPct: number }[];
+  payments: { method: PaymentMethod; amountPaise: number }[];
+};
+
+export function getBill(id: number): BillDetail | undefined {
+  const b = billRow(id);
+  if (!b) return undefined;
+  return {
+    ...b,
+    lines: all("SELECT kind, name, qty, unit_paise AS unitPaise, tax_pct AS taxPct FROM bill_lines WHERE bill_id = ? ORDER BY id", id),
+    payments: all("SELECT method, amount_paise AS amountPaise FROM payments WHERE bill_id = ? ORDER BY id", id),
+  };
+}
+
+function billRow(id: number) {
+  return get<Omit<BillDetail, "lines" | "payments">>(
+    `SELECT b.id, b.invoice_no AS invoiceNo, b.total_paise AS totalPaise, b.status, b.created_at AS createdAt,
+            st.name AS stationName, c.name AS customerName, b.subtotal_paise AS subtotalPaise,
+            b.discount_paise AS discountPaise, b.discount_reason AS discountReason, b.tax_paise AS taxPaise,
+            b.void_reason AS voidReason, b.staff_id AS staffId
+     FROM bills b
+     LEFT JOIN sessions s ON s.id = b.session_id
+     LEFT JOIN stations st ON st.id = s.station_id
+     LEFT JOIN customers c ON c.id = b.customer_id
+     WHERE b.id = ?`,
+    id,
+  );
+}
+
+export type TodaySummary = { bills: number; totalPaise: number; byMethod: Record<PaymentMethod, number> };
+
+/** Paid (not void) bills created at or after `sinceMs`, with the takings split by how they were paid. */
+export function todaySummary(sinceMs: number): TodaySummary {
+  const t = get<{ n: number; total: number }>(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(total_paise), 0) AS total FROM bills WHERE status = 'paid' AND created_at >= ?",
+    sinceMs,
+  );
+  const byMethod: Record<PaymentMethod, number> = { cash: 0, upi: 0, card: 0 };
+  for (const r of all<{ method: PaymentMethod; paise: number }>(
+    `SELECT p.method, SUM(p.amount_paise) AS paise FROM payments p JOIN bills b ON b.id = p.bill_id
+     WHERE b.status = 'paid' AND b.created_at >= ? GROUP BY p.method`,
+    sinceMs,
+  )) byMethod[r.method] = r.paise;
+  return { bills: t?.n ?? 0, totalPaise: t?.total ?? 0, byMethod };
+}
