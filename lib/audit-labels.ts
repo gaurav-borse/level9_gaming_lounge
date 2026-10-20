@@ -11,7 +11,7 @@ const LABEL: Record<string, string> = {
   "settings.cafe": "Changed lounge settings", "settings.whatsapp": "Changed WhatsApp settings",
   "logo.upload": "Uploaded a logo", "logo.reset": "Changed the logo", "loginimage.upload": "Uploaded the sign-in picture", "loginimage.reset": "Reset the sign-in picture",
   "investment.add": "Added an investment", "investment.update": "Changed an investment", "investment.delete": "Removed an investment", "expense.add": "Added an expense", "expense.delete": "Removed an expense", export: "Exported to Excel",
-  "backup.now": "Made a backup", "backup.folder": "Changed the backup folder", "backup.restore": "Restored a backup",
+  "data.clear": "Cleared all data", "backup.now": "Made a backup", "backup.folder": "Changed the backup folder", "backup.restore": "Restored a backup",
 };
 
 /** Plain words for an audit log action code; an unknown code is shown as it is. */

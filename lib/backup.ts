@@ -5,8 +5,8 @@ import { dataDir } from "./db/index.ts";
 import { MIGRATIONS } from "./db/migrations.ts";
 import { UserError } from "./errors.ts";
 
-/** Names we write and will restore: automatic backups, the copy made before a database upgrade, and the copy made before a restore. */
-export const BACKUP_NAME = /^lounge-(\d{8}-\d{6}|before-v\d+|before-restore-\d{8}-\d{6})\.db$/;
+/** Names we write and will restore: automatic backups, the copy made before a database upgrade, and the copies made before a restore or before clearing all data. */
+export const BACKUP_NAME = /^lounge-(\d{8}-\d{6}|before-v\d+|before-restore-\d{8}-\d{6}|before-clear-\d{8}-\d{6})\.db$/;
 const AUTO_NAME = /^lounge-\d{8}-\d{6}\.db$/;
 export const backupsDir = (): string => path.join(dataDir(), "backups");
 export const KEEP = 14;
@@ -18,7 +18,7 @@ export function stamp(ms: number): string {
   return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
 }
 
-export type BackupFile = { name: string; size: number; at: number; kind: "auto" | "upgrade" | "restore" };
+export type BackupFile = { name: string; size: number; at: number; kind: "auto" | "upgrade" | "restore" | "clear" };
 
 export function listBackups(dir: string): BackupFile[] {
   if (!fs.existsSync(dir)) return [];
@@ -26,7 +26,7 @@ export function listBackups(dir: string): BackupFile[] {
     .filter((n) => BACKUP_NAME.test(n))
     .map((name) => {
       const st = fs.statSync(path.join(dir, name));
-      return { name, size: st.size, at: st.mtimeMs, kind: AUTO_NAME.test(name) ? "auto" as const : name.startsWith("lounge-before-restore") ? "restore" as const : "upgrade" as const };
+      return { name, size: st.size, at: st.mtimeMs, kind: AUTO_NAME.test(name) ? "auto" as const : name.startsWith("lounge-before-restore") ? "restore" as const : name.startsWith("lounge-before-clear") ? "clear" as const : "upgrade" as const };
     })
     .sort((a, b) => b.at - a.at || b.name.localeCompare(a.name));
 }
@@ -42,7 +42,7 @@ const sqlQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
  * A consistent copy of the live database (VACUUM INTO), then the same file copied to the second folder when there is one.
  * A failed copy never loses the backup itself: it is reported in `copyError`.
  */
-export function makeBackup(db: DatabaseSync, dir: string, o: { second?: string; now?: number; prefix?: "before-restore" } = {}): { name: string; copyError?: string } {
+export function makeBackup(db: DatabaseSync, dir: string, o: { second?: string; now?: number; prefix?: "before-restore" | "before-clear" } = {}): { name: string; copyError?: string } {
   const now = o.now ?? Date.now();
   fs.mkdirSync(dir, { recursive: true });
   const nameAt = (t: number) => `lounge-${o.prefix ? `${o.prefix}-` : ""}${stamp(t)}.db`;

@@ -1,14 +1,17 @@
 import { DatabaseBackup } from "lucide-react";
+import { DialogButton } from "@/components/dialog-button";
+import { authSecret } from "@/lib/auth";
+import { makeChallenge } from "@/lib/danger";
 import { ActionForm } from "@/components/action-form";
 import { DeleteButton } from "@/components/menu/DeleteButton";
 import { backupsDir, KEEP, listBackups } from "@/lib/backup";
 import type { BackupFile } from "@/lib/backup";
 import { getSetting } from "@/lib/db/settings";
 import { dateTime } from "@/lib/format";
-import { btnCls, btnPrimaryCls, cardCls, inputCls, labelCls } from "@/lib/ui";
-import { backupNowAction, restoreBackupAction, saveBackupFolderAction } from "./actions";
+import { btnCls, btnDangerCls, btnPrimaryCls, cardCls, inputCls, labelCls } from "@/lib/ui";
+import { backupNowAction, clearAllDataAction, restoreBackupAction, saveBackupFolderAction } from "./actions";
 
-const KIND = { auto: "Automatic", upgrade: "Before an app update", restore: "Before a restore" } as const;
+const KIND = { auto: "Automatic", upgrade: "Before an app update", restore: "Before a restore", clear: "Before clearing all data" } as const;
 const size = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
 function Row({ f, from }: { f: BackupFile; from: "main" | "second" }) {
@@ -37,6 +40,7 @@ export function BackupsTab() {
   const main = listBackups(backupsDir());
   const other = second ? listBackups(second) : [];
   const last = main.find((b) => b.kind === "auto");
+  const challenge = makeChallenge(authSecret());
   return (
     <div className="space-y-6">
       <section className={`${cardCls} space-y-4 p-6`}>
@@ -87,6 +91,39 @@ export function BackupsTab() {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-over/40 bg-panel p-6">
+        <h2 className="font-display text-xl font-semibold text-over">Clear all data</h2>
+        <p className="max-w-prose text-sm text-mute">
+          For when you have finished testing and want a clean start. This deletes all bills and sessions, customers, expenses, investments, the menu and stock, zones, stations, rates, every setting, the activity log and uploaded pictures.
+          The logins (owner and staff) are kept. A safety copy of everything is saved first, so a mistake can be undone with Restore above.
+        </p>
+        <div>
+          <DialogButton danger label="Clear all data…" title="Clear all data">
+            <ActionForm action={clearAllDataAction} success="Everything is cleared. A safety copy is in the Restore list." className="flex flex-col gap-4">
+              <p className="rounded-xl border border-over/40 bg-over/10 px-4 py-3 text-sm text-over">
+                This deletes every bill, customer, expense, investment, menu item, zone, station, rate and setting. Logins are kept.
+              </p>
+              <input type="hidden" name="expires" value={challenge.expires} />
+              <input type="hidden" name="mac" value={challenge.mac} />
+              <div>
+                <label className={labelCls} htmlFor="clearCode">To continue, type this code</label>
+                <p aria-label={`Code: ${challenge.code.split("").join(" ")}`} className="mb-2 select-none rounded-xl bg-bg px-4 py-3 text-center font-mono text-3xl font-bold tracking-[0.4em]">{challenge.code}</p>
+                <input id="clearCode" name="code" required autoComplete="off" autoCapitalize="characters" spellCheck={false} placeholder="Type the code above" className={inputCls} />
+              </div>
+              <label className="flex items-start gap-2 text-sm text-silver">
+                <input type="checkbox" name="deleteBackups" defaultChecked className="mt-0.5 size-4 accent-brand" />
+                <span>Also delete the backups made so far (they hold the same test data). The safety copy made now is always kept.</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-silver">
+                <input type="checkbox" name="understand" required className="mt-0.5 size-4 accent-brand" />
+                <span>I understand this deletes everything listed above.</span>
+              </label>
+              <button className={`${btnDangerCls} w-fit`}>Clear all data</button>
+            </ActionForm>
+          </DialogButton>
+        </div>
       </section>
     </div>
   );

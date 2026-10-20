@@ -2,6 +2,7 @@
 //   BASE=http://127.0.0.1:3100 DATA=path/to/that/data/folder node scripts/smoke.mjs
 // It drives the real server: first-run setup, login, lockout, role limits, sessions, billing, settings, theme cookie.
 // (No browser: remote debugging is blocked on some company laptops. This checks everything except how it looks.)
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -662,6 +663,35 @@ await step("owner actions are written to the audit log, and the launcher keeps a
     assert.ok(actions.has(a), `audit log is missing ${a}`);
   }
   assert.ok(fs.existsSync(path.join(DATA, "server.log")), "data/server.log should exist (start.bat writes it)");
+});
+
+await step("clear all data (last, it wipes everything): owner only, needs the code and the tick, keeps logins, saves a safety copy", async () => {
+  const secret = fs.readFileSync(path.join(DATA, "auth-secret"), "utf8").trim();
+  const challenge = (code, expires = Date.now() + 600_000) => ({ code, expires: String(expires), mac: crypto.createHmac("sha256", secret).update(`clear:${code}:${expires}`).digest("hex") });
+  const n = (t) => q(`SELECT COUNT(*) AS n FROM ${t}`)[0].n;
+  const intact = (why) => assert.ok(n("bills") > 0 && n("zones") > 0 && n("settings") > 1, `data is still there: ${why}`);
+
+  assert.ok((await (await get("/settings?tab=backups", owner)).text()).includes("Clear all data"), "the button is in Settings > Backups");
+  await form("clearAllDataAction", { ...challenge("ACDEFG"), code: "ACDEFG", understand: "on" }, staff);
+  intact("staff cannot");
+  await form("clearAllDataAction", { ...challenge("ACDEFG"), code: "ACDEFG" }, owner);
+  intact("the box was not ticked");
+  await form("clearAllDataAction", { ...challenge("ACDEFG"), code: "WRONG1", understand: "on" }, owner);
+  intact("wrong code");
+  await form("clearAllDataAction", { ...challenge("ACDEFG", Date.now() - 1000), code: "ACDEFG", understand: "on" }, owner);
+  intact("expired code");
+  await form("clearAllDataAction", { ...challenge("ACDEFG"), mac: "0".repeat(64), code: "ACDEFG", understand: "on" }, owner);
+  intact("forged signature");
+
+  await form("clearAllDataAction", { ...challenge("ACDEFG"), code: "acdefg", understand: "on", deleteBackups: "on" }, owner);
+  for (const t of ["bills", "bill_lines", "payments", "sessions", "customers", "expenses", "investments", "menu_items", "menu_categories", "zones", "stations", "rates", "stock_moves", "message_log"]) assert.equal(n(t), 0, t);
+  assert.deepEqual(q("SELECT key FROM settings").map((r) => r.key), ["setup.done"]);
+  assert.equal(n("user"), 2, "both logins are kept");
+  assert.deepEqual(q("SELECT action FROM audit_log").map((r) => r.action), ["data.clear"]);
+  const left = fs.readdirSync(path.join(DATA, "backups")).filter((f) => f.endsWith(".db"));
+  assert.ok(left.length === 1 && /^lounge-before-clear-\d{8}-\d{6}\.db$/.test(left[0]), `only the safety copy is left: ${left}`);
+  assert.equal((await call("loginAction", ["owner", "4821"])).result.ok, true, "the owner can still sign in");
+  assert.equal((await get("/", owner)).status, 200, "and the app opens on the empty floor, not on a setup loop");
 });
 
 console.log(`\n${passed} smoke steps passed`);

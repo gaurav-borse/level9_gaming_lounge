@@ -7,7 +7,9 @@ import { UserError } from "@/lib/errors";
 import { bool, hhmm, int, oneOf, rupeesToPaise, str } from "@/lib/validate";
 import { isValidUpiId } from "@/lib/engine/upi";
 import { createUser, listStaff, removeUser, renameUser, setPin } from "@/lib/auth-core";
-import { getAuth } from "@/lib/auth";
+import { authSecret, getAuth } from "@/lib/auth";
+import { checkChallenge } from "@/lib/danger";
+import { clearAllData } from "@/lib/db/clear";
 import { audit, dataDir, getDb } from "@/lib/db/index";
 import { BACKUP_NAME, backupsDir, makeBackup, restoreBackup } from "@/lib/backup";
 import { getSetting, setSettings } from "@/lib/db/settings";
@@ -280,5 +282,17 @@ export async function restoreBackupAction(fd: FormData) {
     if (!fs.existsSync(file)) throw new UserError("That backup file is no longer there");
     const { safety } = restoreBackup(getDb(), file, backupsDir());
     audit(me.id, "backup.restore", `${name} (safety copy: ${safety})`);
+  });
+}
+
+/** Wipes everything except the logins. Two locks: the owner, and a code typed from the screen (so one stray click can't do it). */
+export async function clearAllDataAction(fd: FormData) {
+  return act(async () => {
+    const me = await ownerActor();
+    if (!bool(field(fd, "understand"))) throw new UserError("Tick the box to say you understand this deletes everything");
+    const verdict = checkChallenge(authSecret(), String(field(fd, "code") ?? ""), String(field(fd, "expires") ?? ""), String(field(fd, "mac") ?? ""));
+    if (verdict === "expired") throw new UserError("That code has expired. Reload the page and try again.");
+    if (verdict === "wrong") throw new UserError("The code doesn't match. Nothing was deleted.");
+    clearAllData(getDb(), { dataDir: dataDir(), second: getSetting("backup.folder") || undefined, deleteBackups: bool(field(fd, "deleteBackups")), staffId: me.id });
   });
 }
