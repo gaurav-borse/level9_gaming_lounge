@@ -206,4 +206,8 @@ CREATE TABLE investments (
 );
 ALTER TABLE expenses ADD COLUMN station_id INTEGER REFERENCES stations(id);
 `,
+  // 8: bills typed in by hand for visits from before the app was used (shown as "Added by hand").
+  `
+ALTER TABLE bills ADD COLUMN entered_by_hand INTEGER NOT NULL DEFAULT 0;
+`,
 ];

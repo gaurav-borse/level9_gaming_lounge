@@ -38,6 +38,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           <div className="text-right text-sm">
             <div className="font-display text-xl font-bold">{invoiceNo(bill.invoiceNo)}</div>
             <div className="text-silver">{dateTime(bill.createdAt)}</div>
+            {bill.byHand && <div className="text-xs text-mute">Added by hand</div>}
             <div className="text-silver">{bill.customerName ?? "Walk-in"}</div>
           </div>
         </header>

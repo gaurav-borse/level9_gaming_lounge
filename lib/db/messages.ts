@@ -73,7 +73,7 @@ export function pendingMessages(now = Date.now()): TrayMessage[] {
 
   if (on("invoice")) {
     for (const b of all<{ id: number; customerId: number }>(
-      "SELECT id, customer_id AS customerId FROM bills WHERE status = 'paid' AND customer_id IS NOT NULL AND created_at >= ?",
+      "SELECT id, customer_id AS customerId FROM bills WHERE status = 'paid' AND entered_by_hand = 0 AND customer_id IS NOT NULL AND created_at >= ?",
       now - DAY,
     )) {
       const c = contact(b.customerId);

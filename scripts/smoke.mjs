@@ -356,7 +356,7 @@ await step("menu and stock: owner builds a menu, staff restock but cannot edit, 
 });
 
 await step("bills: payment column, search by invoice/station/counter, filter by method, status and date", async () => {
-  const page = async (qs) => (await (await get(`/bills${qs}`, owner)).text());
+  const page = async (qs) => (await (await get(`/bills${qs}`, owner)).text()).replace(/<script[\s\S]*?<\/script>/g, ""); // only what is on screen: the data the page carries for its pop-ups has station names too
   const all_ = await page("");
   assert.ok(all_.includes("Paid by"), "payment mode column");
   assert.ok(all_.includes("Cash") && all_.includes("UPI"), "both payment modes show up");
@@ -647,6 +647,35 @@ await step("investments: owner only, validated, shown with progress and payback,
   await form("deleteInvestmentAction", { id }, owner);
   assert.equal(q("SELECT COUNT(*) AS n FROM investments")[0].n, 1);
   await form("deleteInvestmentAction", { id: q("SELECT id FROM investments")[0].id }, owner);
+});
+
+await step("past bills: the owner adds a bill from before the app, it is a normal paid bill marked 'Added by hand'; staff and bad entries are refused", async () => {
+  const ps5 = station("PS5 1");
+  const before = q("SELECT COUNT(*) AS n FROM bills")[0].n;
+  const d = new Date(Date.now() - 5 * 86400000);
+  const when = `${d.toLocaleDateString("en-CA")}T18:30`;
+  const fields = { startedAt: when, station: String(ps5), minutes: "90", timeAmount: "225", extrasAmount: "80", method: "upi", customer: "", note: "from the register" };
+
+  assert.ok((await (await get("/bills", owner)).text()).includes("Add past bill"), "the owner has the button");
+  assert.ok(!(await (await get("/bills", staff)).text()).includes("Add past bill"), "staff don't");
+  await form("addPastBillAction", fields, staff);
+  await form("addPastBillAction", { ...fields, startedAt: `${new Date(Date.now() + 86400000).toLocaleDateString("en-CA")}T10:00` }, owner);
+  await form("addPastBillAction", { ...fields, minutes: "0" }, owner);
+  await form("addPastBillAction", { ...fields, timeAmount: "", extrasAmount: "" }, owner);
+  await form("addPastBillAction", { ...fields, station: "99999" }, owner);
+  await form("addPastBillAction", { ...fields, startedAt: "yesterday" }, owner);
+  await form("addPastBillAction", { ...fields, method: "bitcoin" }, owner);
+  assert.equal(q("SELECT COUNT(*) AS n FROM bills")[0].n, before, "staff, a future visit, zero minutes, nothing paid, a missing station, a bad date and a bad method are all refused");
+
+  await form("addPastBillAction", fields, owner);
+  const bill = q("SELECT id, total_paise AS total, status, entered_by_hand AS hand, created_at AS at FROM bills ORDER BY id DESC LIMIT 1")[0];
+  assert.deepEqual([bill.total, bill.status, bill.hand], [30500, "paid", 1]);
+  assert.equal(bill.at, new Date(`${when}:00`).getTime() + 90 * 60000, "dated when the visit ended");
+  assert.deepEqual(q("SELECT method, amount_paise AS a FROM payments WHERE bill_id = ?", bill.id), [{ method: "upi", a: 30500 }]);
+  assert.equal(q("SELECT billed, notes FROM sessions WHERE id = (SELECT session_id FROM bills WHERE id = ?)", bill.id)[0].billed, 1);
+  const list = await (await get("/bills?q=PS5", owner)).text();
+  assert.ok(list.includes("Added by hand"), "the list says so");
+  assert.ok((await (await get(`/bills/${bill.id}`, owner)).text()).includes("Added by hand"), "and so does the invoice");
 });
 
 await step("owner resets a PIN: old PIN stops working, new one works", async () => {

@@ -8,6 +8,8 @@ rem Already running? Then just open it.
 call :ping
 if %errorlevel%==0 goto open
 
+if not exist "node\node.exe" goto missing
+if not exist "app\server.js" goto missing
 if not exist "data" mkdir "data"
 set "HOSTNAME=127.0.0.1"
 set "NODE_ENV=production"
@@ -24,6 +26,18 @@ call :ping
 if %errorlevel%==0 goto open
 ping -n 2 127.0.0.1 >nul
 goto wait
+
+:missing
+echo.
+echo Some files the lounge app needs are missing from this folder:
+echo   %~dp0
+echo.
+echo It must contain the folders  node  and  app  next to start.bat.
+echo Copy the whole "release" folder from the computer where the app was built.
+echo (A download of the source code from GitHub does not contain them.)
+echo If node\node.exe is there but not found, the antivirus may have removed it: restore it, or allow this folder.
+pause
+exit /b 1
 
 :failed
 echo.

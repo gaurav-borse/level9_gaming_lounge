@@ -1,8 +1,9 @@
 import { all, get, run, tx, audit } from "./index.ts";
 import { UserError } from "../errors.ts";
 import { billableMs, chargedMinutes, sessionChargePaise } from "../engine/pricing.ts";
-import { computeBill, validatePayments } from "../engine/bill.ts";
+import { PAYMENT_METHODS, computeBill, validatePayments } from "../engine/bill.ts";
 import type { BillLineInput, Discount, PaymentInput, PaymentMethod } from "../engine/bill.ts";
+import type { RateSnapshot } from "../engine/pricing.ts";
 import { getSession, listItems } from "./sessions.ts";
 import type { SessionRow } from "./sessions.ts";
 import { getSetting } from "./settings.ts";
@@ -98,6 +99,7 @@ function writeBill(b: {
   staffId: string;
   now: number;
   audit: string;
+  action?: string; // audit action; by default bill.create / bill.counter
 }): { billId: number; invoiceNo: number } {
   const invoiceNo = (get<{ n: number }>("SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM bills")?.n) ?? 1;
   const billId = Number(
@@ -114,7 +116,7 @@ function writeBill(b: {
   }
   for (const p of b.payments) run("INSERT INTO payments (bill_id, method, amount_paise) VALUES (?,?,?)", billId, p.method, p.amountPaise);
   deductForBill(billId, b.staffId, b.now);
-  audit(b.staffId, b.sessionId === null ? "bill.counter" : "bill.create", `INV-${invoiceNo} ${b.audit}`, b.now);
+  audit(b.staffId, b.action ?? (b.sessionId === null ? "bill.counter" : "bill.create"), `INV-${invoiceNo} ${b.audit}`, b.now);
   return { billId, invoiceNo };
 }
 
@@ -183,6 +185,7 @@ export type BillSummary = {
   stationName: string | null;
   customerName: string | null;
   methods: PaymentMethod[]; // how it was paid: one or several
+  byHand: boolean; // typed in afterwards for a visit from before the app was used
 };
 
 const METHOD_ORDER: PaymentMethod[] = ["cash", "upi", "card"];
@@ -219,16 +222,16 @@ export function countBills(f: BillFilter = {}): number {
 /** Newest first. Every filter is optional; they combine with AND. A counter sale has no station, so it matches "counter". */
 export function listBills(limit = 50, offset = 0, f: BillFilter = {}): BillSummary[] {
   const w = billWhere(f);
-  const rows = all<Omit<BillSummary, "methods"> & { methods: string | null }>(
+  const rows = all<Omit<BillSummary, "methods" | "byHand"> & { methods: string | null; byHand: number }>(
     `SELECT b.id, b.invoice_no AS invoiceNo, b.total_paise AS totalPaise, b.status, b.created_at AS createdAt,
-            st.name AS stationName, c.name AS customerName,
+            st.name AS stationName, c.name AS customerName, b.entered_by_hand AS byHand,
             (SELECT GROUP_CONCAT(DISTINCT p.method) FROM payments p WHERE p.bill_id = b.id) AS methods
      ${BILL_JOINS}
      ${w.sql}
      ORDER BY b.id DESC LIMIT ? OFFSET ?`,
     ...w.args, limit, offset,
   );
-  return rows.map((r) => ({ ...r, methods: METHOD_ORDER.filter((m) => (r.methods ?? "").split(",").includes(m)) }));
+  return rows.map((r) => ({ ...r, byHand: r.byHand === 1, methods: METHOD_ORDER.filter((m) => (r.methods ?? "").split(",").includes(m)) }));
 }
 
 export type BillDetail = BillSummary & {
@@ -253,11 +256,11 @@ export function getBill(id: number): BillDetail | undefined {
 }
 
 function billRow(id: number) {
-  return get<Omit<BillDetail, "lines" | "payments">>(
+  const r = get<Omit<BillDetail, "lines" | "payments" | "byHand"> & { byHand: number }>(
     `SELECT b.id, b.invoice_no AS invoiceNo, b.total_paise AS totalPaise, b.status, b.created_at AS createdAt,
             st.name AS stationName, c.name AS customerName, b.subtotal_paise AS subtotalPaise,
             b.discount_paise AS discountPaise, b.discount_reason AS discountReason, b.tax_paise AS taxPaise,
-            b.void_reason AS voidReason, b.staff_id AS staffId
+            b.void_reason AS voidReason, b.staff_id AS staffId, b.entered_by_hand AS byHand
      FROM bills b
      LEFT JOIN sessions s ON s.id = b.session_id
      LEFT JOIN stations st ON st.id = s.station_id
@@ -265,6 +268,7 @@ function billRow(id: number) {
      WHERE b.id = ?`,
     id,
   );
+  return r && { ...r, byHand: r.byHand === 1 };
 }
 
 export type TodaySummary = { bills: number; totalPaise: number; byMethod: Record<PaymentMethod, number> };
@@ -282,4 +286,56 @@ export function todaySummary(sinceMs: number): TodaySummary {
     sinceMs,
   )) byMethod[r.method] = r.paise;
   return { bills: t?.n ?? 0, totalPaise: t?.total ?? 0, byMethod };
+}
+
+export type PastBillInput = {
+  stationId: number;
+  customerId: number | null;
+  startedAt: number; // when they started playing (epoch ms)
+  minutes: number;
+  timePaise: number; // what they paid for the playing time
+  extrasPaise: number; // what they paid for food and extras (0 if none)
+  method: PaymentMethod;
+  note: string;
+  staffId: string;
+};
+
+/**
+ * A bill for a visit that was already paid before the app was used. It becomes a normal paid bill: the next invoice number,
+ * a finished session on that station (so reports, hours played and investments count it), the lounge's GST setting applied
+ * like any bill, and a flag so it shows as "Added by hand". Wrong ones can be voided like any other bill.
+ */
+export function addPastBill(i: PastBillInput, now = Date.now()): { billId: number; invoiceNo: number } {
+  const endedAt = i.startedAt + i.minutes * 60_000;
+  if (!Number.isFinite(i.startedAt) || i.startedAt < new Date(2000, 0, 1).getTime()) throw new UserError("Pick the date and time they started");
+  if (!Number.isInteger(i.minutes) || i.minutes < 1 || i.minutes > 1440) throw new UserError("Minutes played must be between 1 and 1440");
+  if (endedAt > now) throw new UserError("That visit would end in the future. Bills added by hand are for visits that are already over.");
+  for (const p of [i.timePaise, i.extrasPaise]) if (!Number.isInteger(p) || p < 0) throw new UserError("Amounts can't be negative");
+  if (i.timePaise + i.extrasPaise <= 0) throw new UserError("Enter what they paid");
+  if (!PAYMENT_METHODS.includes(i.method)) throw new UserError("Choose how it was paid");
+  return tx(() => {
+    const st = get<{ name: string }>("SELECT name FROM stations WHERE id = ? AND active = 1", i.stationId);
+    if (!st) throw new UserError("Station not found");
+    if (i.customerId !== null && !get("SELECT 1 AS x FROM customers WHERE id = ?", i.customerId)) throw new UserError("Customer not found");
+    const rate: RateSnapshot = { rateId: 0, name: "Added by hand", hourlyPaise: Math.round((i.timePaise * 60) / i.minutes), extraControllerPaise: 0, incrementMin: 1, minMinutes: 0, graceMin: 0 };
+    const sessionId = Number(
+      run(
+        `INSERT INTO sessions (station_id, customer_id, staff_id, mode, started_at, ended_at, players, rate_json, notes, billed)
+         VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, 1)`,
+        i.stationId, i.customerId, i.staffId, i.startedAt, endedAt, JSON.stringify(rate), i.note.trim().slice(0, 500),
+      ).lastInsertRowid,
+    );
+    const taxPct = lineTaxPct();
+    const lines: BillLineInput[] = [
+      ...(i.timePaise > 0 ? [{ kind: "session" as const, name: `${st.name} - ${i.minutes} min`, qty: 1, unitPaise: i.timePaise, taxPct }] : []),
+      ...(i.extrasPaise > 0 ? [{ kind: "item" as const, name: "Food and extras", qty: 1, unitPaise: i.extrasPaise, taxPct }] : []),
+    ];
+    const totals = computeBill(lines, null);
+    const made = writeBill({
+      sessionId, customerId: i.customerId, lines, totals, discountReason: "", payments: [{ method: i.method, amountPaise: totals.totalPaise }],
+      staffId: i.staffId, now: endedAt, audit: `added by hand, total ${totals.totalPaise}`, action: "bill.manual",
+    });
+    run("UPDATE bills SET entered_by_hand = 1 WHERE id = ?", made.billId);
+    return made;
+  });
 }
