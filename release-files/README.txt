@@ -2,8 +2,11 @@ GAMING LOUNGE MANAGER
 =====================
 
 START:   double-click  start.bat
-         (the first time, a "Gaming Lounge" shortcut is also placed on your Desktop)
-STOP:    double-click  stop.bat    (or just leave it running all day)
+         (the first time, a "Gaming Lounge" shortcut is also placed on your Desktop;
+          if it is not there, double-click  desktop-shortcut.bat  to create it)
+STOP:    the owner can click "Stop app" at the bottom of the left menu,
+         or double-click  stop.bat  (the "Stop Gaming Lounge" icon on the Desktop does the same).
+         Or just leave it running all day.
 
 The app runs quietly in the background (there is no window to close by accident).
 stop.bat stops it. If something goes wrong, the data folder has server.log and server-error.log.

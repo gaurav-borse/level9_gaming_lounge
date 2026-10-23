@@ -2,8 +2,11 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Boxes, ChartColumn, ChevronsLeft, LayoutGrid, LogOut, Receipt, Settings, Users } from "lucide-react";
+import { Boxes, ChartColumn, ChevronsLeft, LayoutGrid, LogOut, Power, Receipt, Settings, Users } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
+import { quitAppAction } from "@/app/(app)/quit-actions";
+import { Modal } from "@/components/modal";
+import { btnCls, btnDangerCls } from "@/lib/ui";
 import { setSidebarAction } from "@/app/(app)/theme-actions";
 import { BrandIcon, BrandWide } from "@/components/brand";
 import type { LogoSources } from "@/lib/logo";
@@ -44,6 +47,22 @@ export function AppShell({ name, brand, role, initialCollapsed, lowStock, tools,
   const path = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [asking, setAsking] = useState(false);
+  const [quit, setQuit] = useState<"no" | "busy" | "done">("no");
+  const [quitError, setQuitError] = useState("");
+
+  const stopApp = async () => {
+    setQuit("busy");
+    const r = await quitAppAction();
+    if (!r.ok) {
+      setQuit("no");
+      setQuitError(r.error);
+      return;
+    }
+    setAsking(false);
+    setQuit("done");
+    window.close(); // works for the app window; if the browser refuses, the message below stays
+  };
 
   const toggle = () => {
     setCollapsed(!collapsed);
@@ -116,8 +135,44 @@ export function AppShell({ name, brand, role, initialCollapsed, lowStock, tools,
             <LogOut className="size-5 shrink-0" aria-hidden />
             <Label>Sign out</Label>
           </button>
+          {role === "owner" && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuitError("");
+                setAsking(true);
+              }}
+              className={`${item} text-silver hover:bg-raised hover:text-ink`}
+            >
+              <Power className="size-5 shrink-0" aria-hidden />
+              <Label>Stop app</Label>
+            </button>
+          )}
         </div>
       </nav>
+
+      <Modal open={asking} onClose={() => setAsking(false)} title="Stop the app?">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-silver">
+            This switches the lounge app off and closes this window. Your data is safe, and running sessions keep their time, but timer alerts stay off until you start the app again from the Desktop icon.
+          </p>
+          {quitError && <p role="alert" className="text-sm text-over">{quitError}</p>}
+          <div className="flex gap-2">
+            <button type="button" className={btnDangerCls} disabled={quit === "busy"} onClick={stopApp}>
+              <Power className="size-4" aria-hidden /> Stop the app
+            </button>
+            <button type="button" className={btnCls} onClick={() => setAsking(false)}>Keep it running</button>
+          </div>
+        </div>
+      </Modal>
+      {quit === "done" && (
+        <div role="alert" className="fixed inset-0 z-50 grid place-items-center bg-bg p-6 text-center">
+          <div>
+            <h1 className="font-display text-3xl font-bold tracking-wide">The app has been stopped</h1>
+            <p className="mt-2 text-silver">You can close this window. To use it again, double-click the Gaming Lounge icon on the Desktop.</p>
+          </div>
+        </div>
+      )}
 
       <main className="min-w-0">
         <div className="no-print mb-4 flex items-center justify-end gap-3">{tools}</div>

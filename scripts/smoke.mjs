@@ -723,4 +723,19 @@ await step("clear all data (last, it wipes everything): owner only, needs the co
   assert.equal((await get("/", owner)).status, 200, "and the app opens on the empty floor, not on a setup loop");
 });
 
+// Last on purpose: it switches the server off.
+await step("stop app: staff are refused, the owner stops the whole app", async () => {
+  assert.equal((await call("quitAppAction", [], staff)).result.ok, false);
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal((await get("/api/health")).status, 200, "still running after staff tried");
+  assert.equal((await call("quitAppAction", [], owner)).result.ok, true);
+  let gone = false;
+  for (let i = 0; i < 20 && !gone; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    gone = await get("/api/health").then(() => false, () => true);
+  }
+  assert.ok(gone, "the server went away");
+  assert.ok(q("SELECT action FROM audit_log").some((r) => r.action === "app.quit"), "and it was logged");
+});
+
 console.log(`\n${passed} smoke steps passed`);
