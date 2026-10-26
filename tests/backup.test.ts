@@ -9,14 +9,14 @@ import { getDb, get } from "../lib/db/index.ts";
 import { createCustomer, listCustomers } from "../lib/db/customers.ts";
 import { setSettings, getSetting } from "../lib/db/settings.ts";
 import { MIGRATIONS } from "../lib/db/migrations.ts";
-import { KEEP, checkBackupFile, ensureRecentBackup, listBackups, makeBackup, restoreBackup, stamp } from "../lib/backup.ts";
+import { KEEP, checkBackupFile, ensureRecentBackup, listBackups, makeBackup, restoreBackup, secondCopyProblem, stamp } from "../lib/backup.ts";
 import { UserError } from "../lib/errors.ts";
 
 // The real database also holds the sign-in system's tables; a stub "user" table stands in for them here.
 beforeEach(() => {
   freshDb();
-  getDb().exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
-  getDb().prepare("INSERT INTO user VALUES ('u1', 'Gabor')").run();
+  getDb().exec("DROP TABLE IF EXISTS user; CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff')");
+  getDb().prepare("INSERT INTO user VALUES ('u1', 'Gabor', 'owner')").run();
 });
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "bk-"));
@@ -114,6 +114,13 @@ test("restore refuses files that are not this app's backups, and changes nothing
     newer.close();
     assert.throws(() => checkBackupFile(path.join(dir, name)), /newer version/);
 
+    // a backup with nobody who can sign in would leave the lounge locked out (and /setup open to anyone)
+    const { name: bare } = makeBackup(getDb(), dir);
+    const noOwner = new DatabaseSync(path.join(dir, bare));
+    noOwner.exec("UPDATE user SET role = 'staff'");
+    noOwner.close();
+    assert.throws(() => checkBackupFile(path.join(dir, bare)), /no owner account/);
+
     assert.deepEqual(listCustomers().map((c) => c.name), ["Keep me"]);
     assert.equal(listBackups(dir).filter((b) => b.kind === "restore").length, 0, "no safety copy for a refused restore");
   } finally {
@@ -136,4 +143,21 @@ test("a backup from an older version restores, leaving newer tables empty", () =
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("secondCopyProblem: silent when there is no second folder or the copy keeps up; speaks when the drive is gone, empty or behind", () => {
+  const dir = tmp();
+  const second = path.join(tmp(), "usb");
+  const t0 = new Date(2026, 9, 7, 9, 0, 0).getTime();
+  assert.equal(secondCopyProblem(dir, ""), null, "no second folder: nothing to check");
+  makeBackup(getDb(), dir, { now: t0 });
+  assert.match(secondCopyProblem(dir, second)!, /cannot be reached/, "the drive is not there");
+  fs.mkdirSync(second);
+  assert.match(secondCopyProblem(dir, second)!, /No backup has been copied/);
+  makeBackup(getDb(), dir, { second, now: t0 + 60_000 });
+  assert.equal(secondCopyProblem(dir, second), "", "in step");
+  makeBackup(getDb(), dir, { now: t0 + 3 * 60 * 60_000 }); // the drive was unplugged for this one
+  fs.utimesSync(path.join(dir, listBackups(dir)[0].name), new Date(t0 + 3 * 60 * 60_000), new Date(t0 + 3 * 60 * 60_000));
+  fs.utimesSync(path.join(second, listBackups(second)[0].name), new Date(t0), new Date(t0));
+  assert.match(secondCopyProblem(dir, second)!, /behind/);
 });

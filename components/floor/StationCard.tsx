@@ -1,13 +1,13 @@
 "use client";
 import { Play } from "lucide-react";
 import type { BoardStation } from "@/lib/db/sessions";
-import { liveInfo } from "@/lib/live";
+import { liveInfo, playerCount } from "@/lib/live";
 import { hms, rupees } from "@/lib/format";
 import { initials, progressFraction } from "@/lib/floor-view";
 import { STATUS, ZONE_ICON, type StatusKey } from "./status";
 import { SessionActions } from "./SessionActions";
 
-const bar: Partial<Record<StatusKey, string>> = { overtime: "bg-over", ending: "bg-warn", paused: "bg-paused" };
+const bar: Partial<Record<StatusKey, string>> = { timeup: "bg-over", ending: "bg-warn", paused: "bg-paused" };
 
 export function StationCard({ station, zoneName, zoneKind, now, leadMin, onOpen, onStart }: {
   station: BoardStation;
@@ -25,8 +25,8 @@ export function StationCard({ station, zoneName, zoneKind, now, leadMin, onOpen,
   const ChipIcon = st.icon;
   const ZoneIcon = ZONE_ICON[zoneKind] ?? ZONE_ICON.custom;
   const countdown = info && info.remainingMs !== null && !info.stopped;
-  const big = !info ? "-:--:--" : countdown ? (info.remainingMs! < 0 ? `+${hms(-info.remainingMs!)}` : hms(info.remainingMs!)) : hms(info.playedMs);
-  const caption = !s || !info ? "" : countdown ? (info.remainingMs! < 0 ? "over time" : "time left") : info.stopped ? "played" : "elapsed";
+  const big = !info ? "-:--:--" : countdown ? hms(info.remainingMs!) : hms(info.playedMs);
+  const caption = !s || !info ? "" : countdown ? (info.status === "timeup" ? "time's up" : "time left") : info.stopped ? "played" : "elapsed";
   const fraction = s && info ? progressFraction(info.playedMs, s.plannedMinutes) : null;
   const plan = !s ? "" : s.plannedMinutes ? `${s.plannedMinutes} min` : "open";
 
@@ -62,12 +62,12 @@ export function StationCard({ station, zoneName, zoneKind, now, leadMin, onOpen,
               <span className="mt-1 block text-xs text-mute">{caption} · {plan} · {rupees(s.rate.hourlyPaise)}/hr</span>
             </span>
             <span aria-hidden className="mt-3 block h-1.5 overflow-hidden rounded-full bg-ink/10">
-              <span className={`block h-full rounded-full transition-[width] duration-1000 ease-linear motion-reduce:transition-none ${bar[key] ?? "bg-brand"}`} style={{ width: `${(key === "overtime" ? 1 : (fraction ?? 0)) * 100}%` }} />
+              <span className={`block h-full rounded-full transition-[width] duration-1000 ease-linear motion-reduce:transition-none ${bar[key] ?? "bg-brand"}`} style={{ width: `${(key === "timeup" ? 1 : (fraction ?? 0)) * 100}%` }} />
             </span>
             <span className="mt-4 flex items-center gap-3 border-t border-line pt-4 text-sm">
               <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-ink/10 text-xs font-bold">{initials(s.customerName)}</span>
               <span className="min-w-0 flex-1 leading-snug text-silver">
-                {s.customerName ?? "Walk-in"} · {s.players} {s.players === 1 ? "player" : "players"}
+                {s.customerName ?? "Walk-in"} · {playerCount(s)} {playerCount(s) === 1 ? "player" : "players"}
                 {s.items.length > 0 ? ` · ${s.items.length} ${s.items.length === 1 ? "item" : "items"}` : ""}
               </span>
               <span className="tnum font-display text-lg font-semibold">{info ? rupees(info.totalPaise) : ""}</span>
@@ -79,7 +79,7 @@ export function StationCard({ station, zoneName, zoneKind, now, leadMin, onOpen,
                 Take payment
               </button>
             ) : (
-              <SessionActions session={s} />
+              <SessionActions session={s} timeUp={info.status === "timeup"} />
             )}
           </div>
         </>

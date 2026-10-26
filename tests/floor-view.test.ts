@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attentionRank, greetingFor, initials, pickFeatured, progressFraction, radarPoint, summarize, zoneUsage } from "../lib/floor-view.ts";
+import { attentionRank, greetingFor, initials, pickFeatured, progressFraction, summarize, zoneAvailability } from "../lib/floor-view.ts";
 
 test("initials: two names, one name, walk-in, extra spaces, lowercase", () => {
   assert.equal(initials("Asha Rao"), "AR");
@@ -30,7 +30,7 @@ test("summarize counts in use, free, ending soon (including overtime) and skips 
     { maintenance: false, busy: false, status: null },
     { maintenance: false, busy: true, status: "running" },
     { maintenance: false, busy: true, status: "ending" },
-    { maintenance: false, busy: true, status: "overtime" },
+    { maintenance: false, busy: true, status: "timeup" },
     { maintenance: false, busy: true, status: "paused" },
     { maintenance: true, busy: false, status: null },
   ]);
@@ -42,7 +42,7 @@ test("summarize on an empty floor", () => {
 });
 
 test("attentionRank orders overtime, ending, awaiting payment, running, paused, free, maintenance", () => {
-  const order = ["overtime", "ending", "awaiting", "running", "paused", "free", "maintenance"];
+  const order = ["timeup", "ending", "awaiting", "running", "paused", "free", "maintenance"];
   const ranks = order.map(attentionRank);
   assert.deepEqual([...ranks].sort((a, b) => a - b), ranks);
   assert.equal(new Set(ranks).size, order.length);
@@ -56,27 +56,26 @@ test("pickFeatured: most urgent status wins, then least time left, then longest 
   assert.equal(pickFeatured([s(1, "running", 600_000, 1), s(2, "ending", 300_000, 1)])!.id, 2);
   assert.equal(pickFeatured([s(1, "running", 900_000, 1), s(2, "running", 600_000, 1)])!.id, 2);
   assert.equal(pickFeatured([s(1, "running", null, 10), s(2, "running", null, 99)])!.id, 2); // open sessions: longest played
-  assert.equal(pickFeatured([s(1, "running", 1_000, 1), s(2, "overtime", -5_000, 1)])!.id, 2);
+  assert.equal(pickFeatured([s(1, "running", 1_000, 1), s(2, "timeup", -5_000, 1)])!.id, 2);
 });
 
-test("zoneUsage: share of working stations in use; maintenance stations are left out of the count", () => {
-  const u = zoneUsage([
-    { name: "Pool", stations: [{ busy: true, maintenance: false }, { busy: false, maintenance: false }] },
-    { name: "Sim", stations: [{ busy: false, maintenance: true }] },
-    { name: "PC", stations: [{ busy: true, maintenance: false }, { busy: false, maintenance: true }] },
+test("zoneAvailability: free count per zone, maintenance left out, next station to free up (overtime and payment first)", () => {
+  const st = (name: string, o: { maintenance?: boolean; busy?: boolean; payment?: boolean; remainingMs?: number | null } = {}) => ({ name, maintenance: false, busy: false, payment: false, remainingMs: null, ...o });
+  const u = zoneAvailability([
+    { name: "Pool", stations: [st("Pool 1"), st("Pool 2", { busy: true, remainingMs: 600_000 })] },
+    { name: "Sim", stations: [st("Sim 1", { maintenance: true })] },
+    { name: "PS5", stations: [st("PS5 1", { busy: true, remainingMs: 900_000 }), st("PS5 2", { busy: true, remainingMs: 300_000 }), st("PS5 3", { maintenance: true })] },
+    { name: "PC", stations: [st("PC 1", { busy: true, remainingMs: -60_000 }), st("PC 2", { busy: true, payment: true, remainingMs: 1 }), st("PC 3", { busy: true, remainingMs: null })] },
+    { name: "Old", stations: [st("Old 1", { busy: true, remainingMs: null })] },
   ]);
-  assert.deepEqual(u, [{ name: "Pool", value: 0.5 }, { name: "Sim", value: 0 }, { name: "PC", value: 1 }]);
-});
-
-test("radarPoint: first corner is straight up, then clockwise; fraction 0 is the centre", () => {
-  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
-  const [x0, y0] = radarPoint(0, 4, 1, 80, 100, 100);
-  near(x0, 100); near(y0, 20);
-  const [x1, y1] = radarPoint(1, 4, 1, 80, 100, 100); // right
-  near(x1, 180); near(y1, 100);
-  const [x2, y2] = radarPoint(2, 4, 0.5, 80, 100, 100); // down, half way
-  near(x2, 100); near(y2, 140);
-  assert.deepEqual(radarPoint(3, 5, 0, 80, 100, 100), [100, 100]);
+  assert.deepEqual(u[0], { name: "Pool", usable: 2, free: 1, next: { station: "Pool 2", ms: 600_000, payment: false } });
+  assert.deepEqual(u[1], { name: "Sim", usable: 0, free: 0, next: null });
+  assert.deepEqual(u[2], { name: "PS5", usable: 2, free: 0, next: { station: "PS5 2", ms: 300_000, payment: false } });
+  assert.equal(u[3].free, 0);
+  assert.deepEqual(u[3].next, { station: "PC 1", ms: -60_000, payment: false }, "overtime is the soonest");
+  assert.deepEqual(u[4].next, { station: "Old 1", ms: null, payment: false }, "a session without an end time is still reported");
+  const pay = zoneAvailability([{ name: "X", stations: [st("X 1", { busy: true, payment: true, remainingMs: 5 }), st("X 2", { busy: true, remainingMs: 100_000 })] }]);
+  assert.deepEqual(pay[0].next, { station: "X 1", ms: 0, payment: true });
 });
 
 test("greetingFor: morning from 5, afternoon from noon, evening from 5 pm and through the night", () => {

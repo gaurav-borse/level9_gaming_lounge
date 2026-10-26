@@ -19,8 +19,8 @@ import { checkChallenge, makeChallenge, CHALLENGE_MINUTES } from "../lib/danger.
 // The sign-in system's tables sit beside ours in the real database; a stub "user" table stands in for them.
 beforeEach(() => {
   freshDb();
-  getDb().exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
-  getDb().prepare("INSERT INTO user VALUES ('u1', 'Owner'), ('u2', 'Staff')").run();
+  getDb().exec("DROP TABLE IF EXISTS user; CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff')");
+  getDb().prepare("INSERT INTO user VALUES ('u1', 'Owner', 'owner'), ('u2', 'Staff', 'staff')").run();
 });
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "clear-"));
@@ -29,7 +29,7 @@ const count = (t: string) => get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`
 function fill() {
   setSettings({ "setup.done": "1", "cafe.name": "Test Lounge", "gst.enabled": "1", "backup.folder": "x" });
   const c = createCustomer("Asha", "98765 43210");
-  const s = startSession({ stationId: station("pool"), staffId: "u1", mode: "open", players: 1, customerId: c, now: T0 });
+  const s = startSession({ stationId: station("pool"), staffId: "u1", plannedMinutes: 1, players: 1, customerId: c, now: T0 });
   stopSession(s, T0 + 60 * MIN, "u1");
   const total = buildDraft(s, T0 + 60 * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
   finalizeBill({ sessionId: s, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: total }], now: T0 + 61 * MIN });

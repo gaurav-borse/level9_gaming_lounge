@@ -14,8 +14,9 @@ export const DEFAULTS = {
   "gst.pct": "18",
   "alert.leadMin": "10",
   "alert.enabled": "1", // the bell, the pop-up notices and the sounds
-  "alert.sound": "1", // beeps when a session is ending or over time
+  "alert.sound": "1", // beeps when a session is ending or its time is up
   "staff.maxDiscountPct": "10",
+  "notice.adjustSeen": "0", // the owner has seen every amount change up to this bill id (the bell lists the newer ones)
   "backup.folder": "", // a second place (USB drive, cloud-synced folder) every backup is also copied to
   "wa.mode": "prompt", // "prompt" = staff tap each message; a "cloud" sender can take over later
   "wa.enabled": "1",

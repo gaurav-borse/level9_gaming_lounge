@@ -210,4 +210,20 @@ ALTER TABLE expenses ADD COLUMN station_id INTEGER REFERENCES stations(id);
   `
 ALTER TABLE bills ADD COLUMN entered_by_hand INTEGER NOT NULL DEFAULT 0;
 `,
+  // 9: a session started by mistake can be cancelled by the owner. It is closed with no bill (billed = 1 frees the station) and kept here, with why and by whom.
+  `
+ALTER TABLE sessions ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN cancel_reason TEXT;
+ALTER TABLE sessions ADD COLUMN cancelled_by TEXT;
+ALTER TABLE sessions ADD COLUMN cancelled_at INTEGER;
+`,
+  // 10: controllers added during a session (their price for the rest of the planned time is kept as one amount), and bills whose amount was
+  // changed when taking payment: adjusted_paise is what was taken minus what the app had worked out, so negative = taken less.
+  `
+ALTER TABLE sessions ADD COLUMN added_controllers INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN added_controllers_paise INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE bills ADD COLUMN adjusted_paise INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE bills ADD COLUMN adjusted_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE bills ADD COLUMN adjusted_by TEXT;
+`,
 ];

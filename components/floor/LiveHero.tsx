@@ -1,7 +1,7 @@
 "use client";
 import { Gamepad2, Play } from "lucide-react";
 import type { BoardStation } from "@/lib/db/sessions";
-import { liveInfo } from "@/lib/live";
+import { liveInfo, playerCount } from "@/lib/live";
 import { clock, hms, rupees } from "@/lib/format";
 import { progressFraction } from "@/lib/floor-view";
 import { SessionActions } from "./SessionActions";
@@ -10,8 +10,7 @@ const R = 42;
 const C = 2 * Math.PI * R;
 
 function planLabel(s: NonNullable<BoardStation["session"]>): string {
-  if (s.mode === "open") return "Open session";
-  return `${s.mode === "prepaid" ? "Prepaid" : "Fixed"} · ${s.plannedMinutes} min`;
+  return s.plannedMinutes ? `Fixed · ${s.plannedMinutes} min` : "Open session"; // no set time: a session from before every session had one
 }
 
 /** The big card: the most urgent live session, with its timer and controls. Shows a prompt to start one when the floor is idle. */
@@ -43,11 +42,11 @@ export function LiveHero({ station, zoneName, now, leadMin, onOpen, onStart }: {
 
   const info = liveInfo(s, leadMin, now);
   const countdown = info.remainingMs !== null;
-  const big = countdown ? (info.remainingMs! < 0 ? `+${hms(-info.remainingMs!)}` : hms(info.remainingMs!)) : hms(info.playedMs);
-  const label = countdown ? (info.remainingMs! < 0 ? "Over time" : "Time left") : "Elapsed";
-  const fraction = info.remainingMs !== null && info.remainingMs < 0 ? 1 : (progressFraction(info.playedMs, s.plannedMinutes) ?? 0);
+  const big = countdown ? hms(info.remainingMs!) : hms(info.playedMs);
+  const label = countdown ? (info.status === "timeup" ? "Time's up" : "Time left") : "Elapsed";
+  const fraction = info.status === "timeup" ? 1 : (progressFraction(info.playedMs, s.plannedMinutes) ?? 0);
   const first = s.items[0];
-  const status = info.status === "overtime" ? "Overtime" : info.status === "ending" ? "Ending soon" : info.status === "paused" ? "Paused" : "Live now";
+  const status = info.status === "timeup" ? "Time's up" : info.status === "ending" ? "Ending soon" : info.status === "paused" ? "Paused" : "Live now";
 
   return (
     <section aria-labelledby="hero-title" className="hero-bg relative isolate flex overflow-hidden rounded-4xl p-5 sm:p-8">
@@ -64,7 +63,7 @@ export function LiveHero({ station, zoneName, now, leadMin, onOpen, onStart }: {
         </div>
         <h2 id="hero-title" className="mt-4 font-display text-3xl font-bold tracking-wide sm:text-4xl">{station.name}</h2>
         <p className="mt-1 text-sm text-white/75">
-          {s.customerName ?? "Walk-in"} · {s.players} {s.players === 1 ? "player" : "players"} · {rupees(s.rate.hourlyPaise)}/hr · started {clock(s.startedAt)}
+          {s.customerName ?? "Walk-in"} · {playerCount(s)} {playerCount(s) === 1 ? "player" : "players"} · {rupees(s.rate.hourlyPaise)}/hr · started {clock(s.startedAt)}
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-4">
@@ -79,7 +78,7 @@ export function LiveHero({ station, zoneName, now, leadMin, onOpen, onStart }: {
             </div>
           </div>
           <div className="flex w-full flex-wrap items-center gap-x-5 gap-y-3">
-            <SessionActions session={s} hero />
+            <SessionActions session={s} timeUp={info.status === "timeup"} hero />
             <button type="button" onClick={onOpen} className="text-sm font-medium text-white/80 underline-offset-4 hover:text-white hover:underline focus-visible:outline-2 focus-visible:outline-white">
               Details, food and notes
             </button>

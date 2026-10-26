@@ -12,7 +12,7 @@ import { parsePercent, rupeesToPaise } from "@/lib/validate";
 import { rupees } from "@/lib/format";
 import { btnCls, btnPrimaryCls, inputCls, labelCls } from "@/lib/ui";
 
-type Draft = { lines: BillLineInput[]; advancePaise: number; advanceMethod: string | null; maxStaffDiscountPct: number };
+type Draft = { lines: BillLineInput[]; maxStaffDiscountPct: number };
 type Row = { method: string; rupees: string };
 
 const safePaise = (v: string): number | null => {
@@ -40,6 +40,9 @@ export function BillPanel({ sessionId, counterLines, cafeName, upiId, role, onPa
   const [reason, setReason] = useState("");
   const [rows, setRows] = useState<Row[]>([{ method: "cash", rupees: "" }]);
   const [touched, setTouched] = useState(false);
+  const [adjusting, setAdjusting] = useState(false); // the amount really taken is not the total shown
+  const [taken, setTaken] = useState("");
+  const [adjWhy, setAdjWhy] = useState("");
   const counterKey = counterLines ? JSON.stringify(counterLines) : null;
 
   useEffect(() => {
@@ -68,9 +71,11 @@ export function BillPanel({ sessionId, counterLines, cafeName, upiId, role, onPa
   const totals = useMemo(() => (draft ? computeBill(draft.lines, discount) : null), [draft, discount]);
   if (!draft || !totals) return <p className="text-sm text-mute">Calculating bill…</p>;
 
-  const advanceApplied = draft.advanceMethod ? Math.min(draft.advancePaise, totals.totalPaise) : 0;
-  const refund = draft.advancePaise - advanceApplied;
-  const due = totals.totalPaise - advanceApplied;
+  const takenPaise = adjusting && taken.trim() ? safePaise(taken) : null;
+  const changed = takenPaise !== null && takenPaise !== totals.totalPaise;
+  const due = changed ? takenPaise : totals.totalPaise;
+  const raiseRefused = changed && due > totals.totalPaise && (role !== "owner" || !draft.lines.some((l) => l.kind === "session"));
+  const needsReason = changed && !adjWhy.trim();
 
   // Until staff edit anything, a single payment row simply follows the amount due.
   const shown: Row[] = !touched && rows.length === 1 ? (due > 0 ? [{ method: rows[0].method, rupees: (due / 100).toFixed(2) }] : []) : rows;
@@ -128,10 +133,29 @@ export function BillPanel({ sessionId, counterLines, cafeName, upiId, role, onPa
         <div className="flex justify-between text-mute"><dt>Subtotal</dt><dd className="tnum">{rupees(totals.subtotalPaise)}</dd></div>
         {totals.discountPaise > 0 && <div className="flex justify-between text-mute"><dt>Discount</dt><dd className="tnum">−{rupees(totals.discountPaise)}</dd></div>}
         {totals.taxPaise > 0 && <div className="flex justify-between text-mute"><dt>Includes GST</dt><dd className="tnum">{rupees(totals.taxPaise)}</dd></div>}
-        <div className="flex items-baseline justify-between border-t border-line pt-2 font-display text-3xl font-bold"><dt>Total</dt><dd className="tnum">{rupees(totals.totalPaise)}</dd></div>
-        {advanceApplied > 0 && <div className="flex justify-between text-silver"><dt>Paid in advance ({draft.advanceMethod})</dt><dd className="tnum">−{rupees(advanceApplied)}</dd></div>}
-        {refund > 0 && <div className="rounded-lg bg-warn/10 px-3 py-2 text-warn">Give back {rupees(refund)} to the customer.</div>}
+        <div className={`flex items-baseline justify-between border-t border-line pt-2 font-display text-3xl font-bold ${changed ? "text-mute line-through decoration-1" : ""}`}><dt>Total</dt><dd className="tnum">{rupees(totals.totalPaise)}</dd></div>
+        {changed && <div className="flex items-baseline justify-between font-display text-3xl font-bold"><dt>Taking</dt><dd className="tnum">{rupees(due)}</dd></div>}
       </dl>
+
+      {!adjusting ? (
+        <button type="button" className="text-sm text-silver underline-offset-4 hover:text-ink hover:underline" onClick={() => setAdjusting(true)}>Taking a different amount? Change it</button>
+      ) : (
+        <div className="space-y-3 rounded-lg border border-warn/40 bg-warn/5 p-3">
+          <div className="grid grid-cols-[8rem_1fr] gap-2">
+            <div>
+              <label className={labelCls} htmlFor="taken">Amount taken (₹)</label>
+              <input id="taken" className={inputCls} inputMode="decimal" placeholder={(totals.totalPaise / 100).toFixed(2)} value={taken} onChange={(e) => setTaken(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="adjwhy">Why is it different?</label>
+              <input id="adjwhy" className={inputCls} maxLength={200} placeholder="e.g. customer agreed on ₹300, we ran late" value={adjWhy} onChange={(e) => setAdjWhy(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-mute">{role === "owner" ? "The owner is told about every changed amount." : "Staff can take less than the total, with a reason. The owner is told and reviews it."}</p>
+          {raiseRefused && <p className="text-xs text-over">{role !== "owner" ? "Only the owner can take more than the total." : "A counter sale can only be lowered."}</p>}
+          <button type="button" className="text-sm text-silver underline-offset-4 hover:text-ink hover:underline" onClick={() => { setAdjusting(false); setTaken(""); setAdjWhy(""); }}>Use the total shown</button>
+        </div>
+      )}
 
       {due > 0 && (
         <div className="space-y-2">
@@ -178,14 +202,14 @@ export function BillPanel({ sessionId, counterLines, cafeName, upiId, role, onPa
 
       <button
         type="button"
-        disabled={pending || remaining !== 0}
+        disabled={pending || remaining !== 0 || needsReason || raiseRefused || (adjusting && taken.trim() !== "" && takenPaise === null)}
         className={`${btnPrimaryCls} w-full !py-3 text-base`}
         onClick={() =>
           call(
             () =>
               counterLines
-                ? counterSaleAction({ lines: counterLines, discountType: dType, discountValue: dValue, reason, payments: shown })
-                : finalizeBillAction({ sessionId: sessionId as number, discountType: dType, discountValue: dValue, reason, payments: shown }),
+                ? counterSaleAction({ lines: counterLines, discountType: dType, discountValue: dValue, reason, payments: shown, finalAmount: changed ? taken : undefined, adjustReason: adjWhy })
+                : finalizeBillAction({ sessionId: sessionId as number, discountType: dType, discountValue: dValue, reason, payments: shown, finalAmount: changed ? taken : undefined, adjustReason: adjWhy }),
             { ok: "Bill paid", onOk: (r) => onPaid((r as { billId: number }).billId) },
           )
         }

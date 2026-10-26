@@ -82,8 +82,6 @@ function RateForm({ zoneId, rate, special }: { zoneId: number; rate?: RateRow; s
         <summary className="w-fit cursor-pointer text-mute hover:text-ink">More options</summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <Num id={`inc-${k}`} name="increment" label="Charge in steps of (min)" value={rate?.incrementMin ?? 1} hint="e.g. 1" w="w-44!" />
-          <Num id={`min-${k}`} name="min" label="Minimum charge (min)" value={rate?.minMinutes ?? 15} hint="e.g. 15" w="w-44!" />
-          <Num id={`grace-${k}`} name="grace" label="Free minutes at start" value={rate?.graceMin ?? 0} hint="e.g. 0" w="w-44!" />
         </div>
       </details>
 

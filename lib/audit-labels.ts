@@ -1,6 +1,6 @@
 const LABEL: Record<string, string> = {
-  "session.start": "Started a session", "session.stop": "Stopped a session", "session.reopen": "Undid a stop", "session.extend": "Extended a session",
-  "session.transfer": "Moved a session", "item.remove": "Removed an item from a tab", "bill.void": "Voided a bill", "bill.manual": "Added a bill by hand",
+  "session.start": "Started a session", "session.stop": "Stopped a session", "session.reopen": "Undid a stop", "session.extend": "Added time to a session", "session.controller": "Added a controller", "bill.adjust": "Changed the amount taken on a bill", "login.fail": "Failed sign-in",
+  "session.transfer": "Moved a session", "session.cancel": "Cancelled a session", "item.add": "Added a custom item to a tab", "item.remove": "Removed an item from a tab", "bill.void": "Marked a bill invalid", "bill.manual": "Added a bill by hand",
   "customer.update": "Edited a customer",
   "menu.category.create": "Added a menu category", "menu.category.update": "Renamed a menu category", "menu.category.delete": "Deleted a menu category",
   "menu.item.create": "Added a menu item", "menu.item.update": "Changed a menu item", "menu.item.delete": "Deleted a menu item",

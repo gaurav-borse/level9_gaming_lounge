@@ -15,7 +15,7 @@ test("a running session survives closing and reopening the database file", () =>
     closeDb();
     getDb();
     seedLevel9Starter();
-    const id = startSession({ stationId: station("ps5"), staffId: "u1", mode: "fixed", plannedMinutes: 60, players: 2, now: T0 });
+    const id = startSession({ stationId: station("ps5"), staffId: "u1", plannedMinutes: 60, players: 2, now: T0 });
     closeDb(); // simulates the laptop being switched off
     getDb(); // simulates start.bat the next morning
     const s = getSession(id);

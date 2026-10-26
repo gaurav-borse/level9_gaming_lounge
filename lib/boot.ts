@@ -9,6 +9,8 @@ import { getSetting } from "./db/settings.ts";
 export async function bootServer(): Promise<void> {
   getDb();
   await migrateAuth(authOpts());
+  // Nobody stays signed in across a restart (stop.bat, power cut, update): the app always opens on the sign-in page.
+  getDb().prepare("DELETE FROM session").run();
   const reset = await applyPinResetFile(getAuth(), path.join(dataDir(), "reset-owner-pin.txt"));
   if (reset) console.log("Owner PIN was reset from data/reset-owner-pin.txt");
 

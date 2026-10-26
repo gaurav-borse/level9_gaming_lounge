@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { freshDb, station, MIN, T0 } from "./helpers.ts";
 import { getDb } from "../lib/db/index.ts";
 import { setSettings } from "../lib/db/settings.ts";
-import { addItem, startSession, stopSession } from "../lib/db/sessions.ts";
+import { addItem, cancelSession, startSession, stopSession } from "../lib/db/sessions.ts";
 import { saveCategory, saveItem } from "../lib/db/menu.ts";
 import { buildDraft, finalizeBill, finalizeCounterSale, getBill, voidBill } from "../lib/db/bills.ts";
 import { addExpense, deleteExpense, listExpenses } from "../lib/db/expenses.ts";
@@ -16,14 +16,14 @@ import { UserError } from "../lib/errors.ts";
 // The sign-in system's "user" table lives beside ours in the real database; a stub stands in for it here.
 beforeEach(() => {
   freshDb();
-  getDb().exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+  getDb().exec("DROP TABLE IF EXISTS user; CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
   getDb().prepare("INSERT INTO user VALUES ('u1', 'Gabor'), ('u2', 'Rahul')").run();
 });
 
 const DAY = 24 * 60 * MIN;
 
 function visit(kind: string, minutes: number, at: number, staff = "u1", item?: [string, number, number]) {
-  const s = startSession({ stationId: station(kind), staffId: staff, mode: "open", players: 1, customerId: null, now: at });
+  const s = startSession({ stationId: station(kind), staffId: staff, plannedMinutes: 1, players: 1, customerId: null, now: at });
   if (item) addItem(s, item[0], item[1], item[2], at + MIN);
   stopSession(s, at + minutes * MIN, staff);
   const total = buildDraft(s, at + minutes * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
@@ -85,12 +85,17 @@ test("buildReport: takings, GST, expenses and net profit; void bills and other d
   assert.equal(r.byMethod.reduce((s, m) => s + m.paise, 0), r.takingsPaise, "payments add up to takings");
   assert.deepEqual(r.expenseByCategory, [{ category: "Rent", paise: 100000, count: 1 }]);
 
-  // Wednesday = row 2 (Monday first); sessions started at 15:00 and 18:00 (and the voided bill's at 19:00)
+  // Wednesday = row 2 (Monday first); sessions started at 15:00 and 18:00. The invalid bill's session (19:00) is not counted.
   assert.equal(r.heat[2][15], 1);
   assert.equal(r.heat[2][18], 1);
-  assert.equal(r.heat[2][19], 1, "a voided bill's session still happened");
+  assert.equal(r.heat[2][19], 0, "a session whose bill was marked invalid is left out of the busy hours");
   assert.equal(r.heatMax, 1);
-  assert.equal(r.heat.flat().reduce((s, n) => s + n, 0), 3);
+  assert.equal(r.heat.flat().reduce((s, n) => s + n, 0), 2);
+  assert.equal(r.sessionsStarted, 2);
+
+  // The invalid bill is listed, with its amount and reason, but is in no total.
+  assert.deepEqual(r.invalid, { bills: 1, paise: getBill(v.billId)!.totalPaise, rows: [{ id: v.billId, invoiceNo: getBill(v.billId)!.invoiceNo, createdAt: T0 + 4 * 60 * MIN + 31 * MIN, station: "Pool 1", totalPaise: getBill(v.billId)!.totalPaise, reason: "wrong table", by: "Gabor" }] });
+  assert.equal(buildReport(resolveRange("custom", "2026-10-09", "2026-10-09", T0)).invalid.bills, 0, "other days have none");
 });
 
 test("an empty period gives zeros, not errors", () => {
@@ -133,8 +138,21 @@ test("audit log: newest first with names, searchable, paged, and plain-words lab
   assert.equal(listAudit("100%").total, 0, "wildcards are plain characters");
   assert.deepEqual(listAudit("", 2, 2).rows.map((r) => r.action), ["rate.save"], "second page");
   assert.equal(listAudit("", 2, 2).total, 3);
-  assert.equal(describeAction("bill.void"), "Voided a bill");
+  assert.equal(describeAction("bill.void"), "Marked a bill invalid");
   assert.equal(describeAction("something.new"), "something.new");
+});
+
+test("a cancelled session is listed on its own, and is in no figure or busy-hours square", () => {
+  visit("ps5", 60, T0); // a real bill, 15:00
+  const s = startSession({ stationId: station("pc"), staffId: "u2", plannedMinutes: 60, players: 1, customerId: null, now: T0 + 3 * 60 * MIN }); // 18:00, by mistake
+  cancelSession(s, "wrong station", "u1", "owner", T0 + 3 * 60 * MIN + 2 * MIN);
+  const r = buildReport(resolveRange("custom", "2026-10-07", "2026-10-07", T0));
+  assert.equal(r.bills, 1);
+  assert.equal(r.sessionsStarted, 1);
+  assert.equal(r.heat[2][18], 0);
+  assert.deepEqual(r.cancelled.rows.map((c) => [c.station, c.plannedMinutes, c.reason, c.by]), [["PC 1", 60, "wrong station", "Gabor"]]);
+  assert.equal(r.cancelled.sessions, 1);
+  assert.equal(buildReport(resolveRange("custom", "2026-10-09", "2026-10-09", T0)).cancelled.sessions, 0);
 });
 
 test("every table on the Reports page adds up to its total, with discounts, GST, counter sales, many items and void bills mixed in", () => {
@@ -150,7 +168,7 @@ test("every table on the Reports page adds up to its total, with discounts, GST,
   for (let i = 0; i < 24; i++) {
     const kind = ["ps5", "pc", "pool", "sim"][i % 4];
     const when = at(i % 6, 10 + (i % 11));
-    const s = startSession({ stationId: station(kind), staffId: i % 3 ? "u1" : "u2", mode: "open", players: 1 + (i % 3), customerId: null, now: when });
+    const s = startSession({ stationId: station(kind), staffId: i % 3 ? "u1" : "u2", plannedMinutes: 1, players: 1 + (i % 3), customerId: null, now: when });
     if (i % 2) addItem(s, `Extra ${i % 5}`, 1 + (i % 4), 1750 + 333 * i, when + MIN); // free-text extras
     stopSession(s, when + (17 + 13 * i) * MIN, "u1");
     const draft = buildDraft(s, when + (17 + 13 * i) * MIN).lines;
@@ -192,8 +210,8 @@ test("every table on the Reports page adds up to its total, with discounts, GST,
   assert.equal(r.expensesPaise, 123456 + 99901 + 5);
   assert.equal(sum(r.expenseByCategory.map((c) => c.paise)), r.expensesPaise);
   assert.equal(r.netPaise, r.takingsPaise - r.taxPaise - r.expensesPaise);
-  assert.equal(r.sessionsStarted, 24, "one session per station bill; counter sales start none");
-  assert.equal(sum(r.heat.map((row) => sum(row))), 24);
+  assert.equal(r.sessionsStarted, 23, "one session per station bill, minus the one whose bill was marked invalid; counter sales start none");
+  assert.equal(sum(r.heat.map((row) => sum(row))), 23);
 
   // the same bills read back one by one give the same totals
   const each = bills.map((id) => getBill(id)!).filter((b) => b.status === "paid");

@@ -13,7 +13,7 @@ beforeEach(freshDb);
 const meta = { lounge: "Level 9 Gaming Lounge", by: "Gabor", at: T0 };
 
 function paidVisit(customerId: number | null, kind: string, minutes: number, at: number) {
-  const s = startSession({ stationId: station(kind), staffId: "u1", mode: "open", players: 1, customerId, now: at });
+  const s = startSession({ stationId: station(kind), staffId: "u1", plannedMinutes: minutes, players: 1, customerId, now: at });
   stopSession(s, at + minutes * MIN, "u1");
   const total = buildDraft(s, at + minutes * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
   return finalizeBill({ sessionId: s, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: total }], now: at + minutes * MIN + MIN });
@@ -46,10 +46,10 @@ test("bills export: one row per bill, void bills listed but left out of the tota
 
   const body = r.slice(r.indexOf(h) + 1, -1);
   assert.equal(body.length, 3);
-  assert.deepEqual(body.map((x) => x[9].value).sort(), ["Paid", "Paid", "Void"]);
+  assert.deepEqual(body.map((x) => x[9].value).sort(), ["Invalid", "Paid", "Paid"]);
   const byInvoice = new Map(body.map((x) => [x[0].value, x]));
-  assert.equal(byInvoice.get("INV-000003")![9].value, "Void");
-  assert.equal(byInvoice.get("INV-000003")![10].value, "Void: wrong table");
+  assert.equal(byInvoice.get("INV-000003")![9].value, "Invalid");
+  assert.equal(byInvoice.get("INV-000003")![10].value, "Invalid: wrong table");
   assert.equal(byInvoice.get("INV-000001")![2].value, "Asha Rao");
   assert.equal(byInvoice.get("INV-000002")![2].value, "Walk-in");
 
@@ -80,7 +80,7 @@ test("a date range limits the bills only, and the sheet says so", () => {
   assert.match(String(r[2][0].value), /^From 7 Oct 2026 · Until 7 Oct 2026 · 2 bills$/);
   assert.equal(rows(customers).length > 6, true, "customers are complete whatever the dates");
   assert.equal(describeFilter({}), "All bills");
-  assert.equal(describeFilter({ method: "upi", status: "void" }), "Paid by UPI · Void only");
+  assert.equal(describeFilter({ method: "upi", status: "void" }), "Paid by UPI · Invalid only");
   const all = exportSheets({}, meta)[0];
   assert.match(String(rows(all)[2][0].value), /^All bills · 3 bills$/);
 });

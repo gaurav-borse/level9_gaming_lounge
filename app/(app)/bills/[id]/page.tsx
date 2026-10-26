@@ -25,7 +25,12 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       <article className="rounded-2xl border border-line bg-panel p-8 print:border-0 print:p-0">
         {bill.status === "void" && (
           <div className="mb-5 rounded-lg border border-over/50 bg-over/10 px-4 py-3 text-sm text-over">
-            <b>VOID</b> · {bill.voidReason}
+            <b>INVALID</b> · {bill.voidReason} · not counted in reports
+          </div>
+        )}
+        {bill.adjustedPaise !== 0 && (
+          <div className="no-print mb-5 rounded-lg border border-warn/50 bg-warn/10 px-4 py-3 text-sm text-warn">
+            <b>Amount changed</b> by {bill.adjustedBy ?? "removed staff"}: {rupees(bill.totalPaise - bill.adjustedPaise)} became {rupees(bill.totalPaise)} · {bill.adjustedReason}
           </div>
         )}
         <header className="flex items-start justify-between gap-6 border-b border-line pb-5">

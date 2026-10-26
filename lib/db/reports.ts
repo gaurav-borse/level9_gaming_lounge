@@ -14,7 +14,8 @@ export type DayRow = { day: string; bills: number; paise: number; taxPaise: numb
  *   subtotalPaise - discountPaise = takingsPaise     (what customers paid)
  *   takingsPaise - taxPaise - expensesPaise = netPaise
  * and the by-zone, by-station, by-item, by-staff, by-method and by-day tables each add up to their matching total above.
- * Only paid bills count: a voided bill is as if it never happened.
+ * Only paid bills count. A bill the owner marked invalid is as if it never happened: it is left out of every figure and of
+ * the busy-hours chart, and only listed (`invalid`) so nothing disappears without a trace.
  */
 export type Report = {
   range: Range;
@@ -40,7 +41,18 @@ export type Report = {
   heatMax: number;
   expenses: Expense[];
   expenseByCategory: { category: string; paise: number; count: number }[];
+  invalid: { bills: number; paise: number; rows: InvalidBill[] }; // marked invalid in this period: shown, never counted
+  cancelled: { sessions: number; rows: CancelledSession[] }; // started by mistake and cancelled in this period: shown, never counted
+  adjusted: { bills: number; lessPaise: number; morePaise: number; rows: AdjustedBill[] }; // paid bills whose amount was changed at payment: already inside the figures above, listed so the owner can review them
 };
+
+export type AdjustedBill = { id: number; invoiceNo: number; createdAt: number; station: string | null; wasPaise: number; totalPaise: number; reason: string; by: string };
+
+export type CancelledSession = { id: number; startedAt: number; cancelledAt: number; station: string; plannedMinutes: number | null; reason: string; by: string };
+
+export type InvalidBill = { id: number; invoiceNo: number; createdAt: number; station: string | null; totalPaise: number; reason: string; by: string };
+
+export const INVALID_LIST_MAX = 100;
 
 export const TOP_ITEMS = 15;
 const PAID = "b.status = 'paid' AND b.created_at >= ? AND b.created_at < ?";
@@ -109,8 +121,33 @@ export function buildReport(range: Range): Report {
   for (const r of all<{ dow: number; hr: number; n: number }>(
     `SELECT CAST(strftime('%w', started_at / 1000, 'unixepoch', 'localtime') AS INTEGER) AS dow,
             CAST(strftime('%H', started_at / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hr, COUNT(*) AS n
-     FROM sessions WHERE started_at >= ? AND started_at < ? GROUP BY dow, hr`, ...a,
+     FROM sessions s WHERE started_at >= ? AND started_at < ?
+       AND s.cancelled = 0 AND NOT EXISTS (SELECT 1 FROM bills b WHERE b.session_id = s.id AND b.status = 'void') GROUP BY dow, hr`, ...a,
   )) heat[(r.dow + 6) % 7][r.hr] = r.n;
+
+  const bad = get<{ n: number; total: number }>(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(b.total_paise), 0) AS total FROM bills b WHERE b.status = 'void' AND b.created_at >= ? AND b.created_at < ?`, ...a,
+  )!;
+  const invalidRows = all<InvalidBill>(
+    `SELECT b.id, b.invoice_no AS invoiceNo, b.created_at AS createdAt, st.name AS station, b.total_paise AS totalPaise,
+            COALESCE(b.void_reason, '') AS reason, COALESCE(u.name, 'Removed staff') AS by
+     FROM bills b LEFT JOIN sessions s ON s.id = b.session_id LEFT JOIN stations st ON st.id = s.station_id LEFT JOIN user u ON u.id = b.voided_by
+     WHERE b.status = 'void' AND b.created_at >= ? AND b.created_at < ? ORDER BY b.id DESC LIMIT ${INVALID_LIST_MAX}`, ...a,
+  );
+
+  const cancelledRows = all<CancelledSession>(
+    `SELECT s.id, s.started_at AS startedAt, s.cancelled_at AS cancelledAt, st.name AS station, s.planned_minutes AS plannedMinutes,
+            COALESCE(s.cancel_reason, '') AS reason, COALESCE(u.name, 'Removed staff') AS by
+     FROM sessions s JOIN stations st ON st.id = s.station_id LEFT JOIN user u ON u.id = s.cancelled_by
+     WHERE s.cancelled = 1 AND s.cancelled_at >= ? AND s.cancelled_at < ? ORDER BY s.cancelled_at DESC`, ...a,
+  );
+
+  const adjustedRows = all<AdjustedBill>(
+    `SELECT b.id, b.invoice_no AS invoiceNo, b.created_at AS createdAt, st.name AS station, b.total_paise - b.adjusted_paise AS wasPaise,
+            b.total_paise AS totalPaise, b.adjusted_reason AS reason, COALESCE(u.name, 'Removed staff') AS by
+     FROM bills b LEFT JOIN sessions s ON s.id = b.session_id LEFT JOIN stations st ON st.id = s.station_id LEFT JOIN user u ON u.id = b.adjusted_by
+     WHERE b.adjusted_paise != 0 AND ${PAID} ORDER BY b.id DESC`, ...a,
+  );
 
   return {
     range,
@@ -140,6 +177,14 @@ export function buildReport(range: Range): Report {
     heat,
     heatMax: Math.max(0, ...heat.flat()),
     expenses,
+    invalid: { bills: bad.n, paise: bad.total, rows: invalidRows },
+    cancelled: { sessions: cancelledRows.length, rows: cancelledRows.slice(0, INVALID_LIST_MAX) },
+    adjusted: {
+      bills: adjustedRows.length,
+      lessPaise: adjustedRows.reduce((s, r) => s + Math.max(0, r.wasPaise - r.totalPaise), 0),
+      morePaise: adjustedRows.reduce((s, r) => s + Math.max(0, r.totalPaise - r.wasPaise), 0),
+      rows: adjustedRows.slice(0, INVALID_LIST_MAX),
+    },
     expenseByCategory: [...cats].map(([category, c]) => ({ category, ...c })).sort((x, y) => y.paise - x.paise || x.category.localeCompare(y.category)),
   };
 }

@@ -68,7 +68,7 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
           <select id="status" name="status" defaultValue={filter.status ?? ""} className={`${inputCls} !w-32`}>
             <option value="">All</option>
             <option value="paid">Paid</option>
-            <option value="void">Void</option>
+            <option value="void">Invalid</option>
           </select>
         </div>
         <div>
@@ -122,7 +122,7 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
                     </span>
                   </td>
                   <td className="tnum px-4 py-3 text-right font-semibold">{rupees(b.totalPaise)}</td>
-                  <td className="px-4 py-3">{b.status === "void" ? <span className="rounded-full bg-over/15 px-2 py-0.5 text-xs text-over">Void</span> : <span className="rounded-full bg-free/15 px-2 py-0.5 text-xs text-free">Paid</span>}</td>
+                  <td className="px-4 py-3">{b.status === "void" ? <span className="rounded-full bg-over/15 px-2 py-0.5 text-xs text-over">Invalid</span> : <span className="rounded-full bg-free/15 px-2 py-0.5 text-xs text-free">Paid</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -145,7 +145,7 @@ function PastBill() {
     <DialogButton label="Add past bill" title="Add a bill from before the app">
       <ActionForm action={addPastBillAction} success="Bill added" resetOnSuccess className="flex flex-col gap-4">
         <p className="text-sm text-mute">
-          For a visit that was already paid before you started using the app. It becomes a normal paid bill in your records, reports and the station&apos;s hours, and shows as &quot;Added by hand&quot;. If you make a mistake, void it from its invoice page.
+          For a visit that was already paid before you started using the app. It becomes a normal paid bill in your records, reports and the station&apos;s hours, and shows as &quot;Added by hand&quot;. If you make a mistake, mark it invalid from its invoice page.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>

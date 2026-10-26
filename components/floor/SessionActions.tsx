@@ -4,8 +4,11 @@ import { useCall } from "@/lib/useCall";
 import { extendAction, pauseAction, resumeAction, stopAction } from "@/app/(app)/actions";
 import type { BoardSession } from "@/lib/db/sessions";
 
-/** Pause or resume, +15 min and Stop for a running session. Used on station cards and on the live-session card. */
-export function SessionActions({ session: s, hero = false }: { session: BoardSession; hero?: boolean }) {
+/**
+ * Pause or resume, +15 min and Stop for a running session. Used on station cards and on the live-session card.
+ * When the time is up the clock has stopped: Pause goes away and the choice is to add time or stop and take payment.
+ */
+export function SessionActions({ session: s, hero = false, timeUp = false }: { session: BoardSession; hero?: boolean; timeUp?: boolean }) {
   const { call, pending } = useCall();
   // Same rule as the drawer: only timed sessions can be extended.
   const canExtend = s.plannedMinutes !== null;
@@ -27,7 +30,7 @@ export function SessionActions({ session: s, hero = false }: { session: BoardSes
 
   return (
     <div className={hero ? "grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto" : "flex gap-2"}>
-      {paused ? (
+      {timeUp ? null : paused ? (
         <button type="button" disabled={pending} className={`${cls.main} ${size}`} onClick={() => call(() => resumeAction(s.id))}>
           <Play className="size-3.5" aria-hidden /> Resume
         </button>
@@ -36,13 +39,13 @@ export function SessionActions({ session: s, hero = false }: { session: BoardSes
           <Pause className="size-3.5" aria-hidden /> Pause
         </button>
       )}
-      {canExtend && (
-        <button type="button" disabled={pending} className={`${cls.soft} ${size}`} onClick={() => call(() => extendAction(s.id, 15), { ok: "Extended by 15 min" })}>
-          +15 min
+      {canExtend && (timeUp ? [15, 30] : [15]).map((m) => (
+        <button key={m} type="button" disabled={pending} className={`${timeUp ? cls.main : cls.soft} ${size}`} onClick={() => call(() => extendAction(s.id, m), { ok: `Added ${m} min` })}>
+          +{m} min
         </button>
-      )}
+      ))}
       <button type="button" disabled={pending} className={`${cls.stop} ${size}`} onClick={() => call(() => stopAction(s.id))}>
-        <Square className="size-3.5" aria-hidden /> Stop
+        <Square className="size-3.5" aria-hidden /> {timeUp ? "Stop & bill" : "Stop"}
       </button>
     </div>
   );

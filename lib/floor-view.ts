@@ -14,18 +14,18 @@ export function progressFraction(playedMs: number, plannedMinutes: number | null
 
 export type FloorSummary = { total: number; inUse: number; free: number; ending: number };
 
-/** Counts for the strip above the floor. "Ending soon" includes sessions already in overtime. */
+/** Counts for the strip above the floor. "Ending soon" includes sessions already in time up. */
 export function summarize(cards: { maintenance: boolean; busy: boolean; status: string | null }[]): FloorSummary {
   return {
     total: cards.length,
     inUse: cards.filter((c) => c.busy).length,
     free: cards.filter((c) => !c.busy && !c.maintenance).length,
-    ending: cards.filter((c) => c.busy && (c.status === "ending" || c.status === "overtime")).length,
+    ending: cards.filter((c) => c.busy && (c.status === "ending" || c.status === "timeup")).length,
   };
 }
 
 /** Card order on the floor: things that need a person first, idle stations last. */
-const STATUS_ORDER = ["overtime", "ending", "awaiting", "running", "paused", "free", "maintenance"];
+const STATUS_ORDER = ["timeup", "ending", "awaiting", "running", "paused", "free", "maintenance"];
 export const attentionRank = (status: string): number => {
   const i = STATUS_ORDER.indexOf(status);
   return i === -1 ? STATUS_ORDER.length : i;
@@ -43,18 +43,27 @@ export function pickFeatured<T extends { status: string; remainingMs: number | n
   return live[0] ?? null;
 }
 
-/** Share of each zone's working stations in use right now, 0 to 1. A zone with every station in maintenance counts as 0. */
-export function zoneUsage(zones: { name: string; stations: { busy: boolean; maintenance: boolean }[] }[]): { name: string; value: number }[] {
+export type ZoneAvailability = {
+  name: string;
+  usable: number; // stations not under maintenance
+  free: number;
+  next: { station: string; ms: number | null; payment: boolean } | null; // the busy station that frees up first; ms <= 0 is time up, null is "no end time set"
+};
+
+/**
+ * For the "Free stations" card: per zone, how many stations are free, and when the next one frees up. A stopped session
+ * waiting for payment counts as about to free up. Answers "is there a PS5 free, and if not, how long?" without any money.
+ */
+export function zoneAvailability(zones: {
+  name: string;
+  stations: { name: string; maintenance: boolean; busy: boolean; payment: boolean; remainingMs: number | null }[];
+}[]): ZoneAvailability[] {
   return zones.map((z) => {
     const usable = z.stations.filter((s) => !s.maintenance);
-    return { name: z.name, value: usable.length === 0 ? 0 : usable.filter((s) => s.busy).length / usable.length };
+    const busy = usable.filter((s) => s.busy).map((s) => ({ station: s.name, payment: s.payment, ms: s.payment ? 0 : s.remainingMs }));
+    busy.sort((a, b) => (a.ms ?? Infinity) - (b.ms ?? Infinity));
+    return { name: z.name, usable: usable.length, free: usable.length - busy.length, next: busy[0] ?? null };
   });
-}
-
-/** Corner `i` of a regular `count`-sided shape, starting at the top and going clockwise. `fraction` is the distance from the centre (0 to 1). */
-export function radarPoint(i: number, count: number, fraction: number, radius: number, cx: number, cy: number): [number, number] {
-  const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
-  return [cx + Math.cos(angle) * radius * fraction, cy + Math.sin(angle) * radius * fraction];
 }
 
 /** "Good morning" until noon, "Good afternoon" until 5 pm, then "Good evening" (also used after midnight: the lounge closes late). */

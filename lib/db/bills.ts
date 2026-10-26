@@ -6,7 +6,7 @@ import type { BillLineInput, Discount, PaymentInput, PaymentMethod } from "../en
 import type { RateSnapshot } from "../engine/pricing.ts";
 import { getSession, listItems } from "./sessions.ts";
 import type { SessionRow } from "./sessions.ts";
-import { getSetting } from "./settings.ts";
+import { getSetting, setSettings } from "./settings.ts";
 import { deductForBill, getMenuItem, lineTaxPct, restoreForBill } from "./menu.ts";
 import { invoiceNumberFrom } from "../bills-filter.ts";
 import type { BillFilter } from "../bills-filter.ts";
@@ -27,8 +27,9 @@ export function buildDraft(sessionId: number, now: number): Draft {
     ? get<{ name: string }>("SELECT name FROM customers WHERE id = ?", session.customerId)
     : undefined;
   const playedMs = billableMs(session, now);
-  const charge = sessionChargePaise(playedMs, session.rate, session.players);
-  const label = `${st?.name ?? "Station"} - ${chargedMinutes(playedMs, session.rate)} min`;
+  const charge = sessionChargePaise(playedMs, session.rate, session.players, session.plannedMinutes) + session.addedControllersPaise;
+  const people = session.players + session.addedControllers;
+  const label = `${st?.name ?? "Station"} - ${chargedMinutes(playedMs, session.rate, session.plannedMinutes)} min${people > 1 ? `, ${people} players` : ""}`;
 
   const lines: BillLineInput[] = [{ kind: "session", name: label, qty: 1, unitPaise: charge, taxPct: lineTaxPct() }];
   for (const it of listItems(sessionId)) {
@@ -43,37 +44,56 @@ export type FinalizeInput = {
   role: "owner" | "staff";
   discount: Discount;
   discountReason: string;
-  payments: PaymentInput[]; // collected now; any prepaid advance is added automatically
+  payments: PaymentInput[]; // collected now
+  finalPaise?: number | null; // the amount actually taken, when it is not what the app worked out; needs adjustReason
+  adjustReason?: string;
   now: number;
 };
 
-export function finalizeBill(i: FinalizeInput): { billId: number; invoiceNo: number; refundPaise: number } {
+export function finalizeBill(i: FinalizeInput): { billId: number; invoiceNo: number } {
   return tx(() => {
     const s = getSession(i.sessionId);
     if (s.billed) throw new UserError("This session is already billed");
     if (s.endedAt === null) throw new UserError("Stop the session before billing it");
 
     const draft = buildDraft(i.sessionId, s.endedAt);
-    const totals = computeBill(draft.lines, i.discount);
+    let totals = computeBill(draft.lines, i.discount);
 
     checkDiscount(totals, i.discountReason, i.role);
+    const adj = adjustment(draft.lines, totals, i);
+    totals = adj.totals;
 
-    const advanceApplied = s.advanceMethod ? Math.min(s.advancePaise, totals.totalPaise) : 0;
-    const refundPaise = s.advancePaise - advanceApplied;
-    const all_: PaymentInput[] = [
-      ...(advanceApplied > 0 && s.advanceMethod ? [{ method: s.advanceMethod, amountPaise: advanceApplied }] : []),
-      ...i.payments,
-    ];
-    const bad = validatePayments(totals.totalPaise, all_);
+    const bad = validatePayments(totals.totalPaise, i.payments);
     if (bad) throw new UserError(bad);
 
     const { billId, invoiceNo } = writeBill({
-      sessionId: s.id, customerId: s.customerId, lines: draft.lines, totals, discountReason: i.discountReason, payments: all_,
-      staffId: i.staffId, now: i.now, audit: `total ${totals.totalPaise}${refundPaise ? ` refund ${refundPaise}` : ""}`,
+      sessionId: s.id, customerId: s.customerId, lines: draft.lines, totals, discountReason: adj.paise < 0 && !i.discountReason.trim() ? `Adjusted: ${adj.reason}` : i.discountReason,
+      payments: i.payments, staffId: i.staffId, now: i.now, audit: `total ${totals.totalPaise}`, adjusted: adj.paise === 0 ? undefined : { paise: adj.paise, reason: adj.reason },
     });
     run("UPDATE sessions SET billed = 1 WHERE id = ?", s.id);
-    return { billId, invoiceNo, refundPaise };
+    return { billId, invoiceNo };
   });
+}
+
+/**
+ * The amount actually taken when it differs from what the app worked out. Taking less is booked as an extra discount (so every total, tax figure and
+ * report stays consistent) and staff may do it; taking more is added to the session line and only the owner may do it. Either way a reason is required.
+ * Mutates `lines` for a raise.
+ */
+function adjustment(lines: BillLineInput[], totals: ReturnType<typeof computeBill>, i: Pick<FinalizeInput, "finalPaise" | "adjustReason" | "discount" | "role">): { totals: ReturnType<typeof computeBill>; paise: number; reason: string } {
+  const none = { totals, paise: 0, reason: "" };
+  if (i.finalPaise === undefined || i.finalPaise === null || i.finalPaise === totals.totalPaise) return none;
+  if (!Number.isInteger(i.finalPaise) || i.finalPaise < 0) throw new UserError("The amount is not valid");
+  const reason = (i.adjustReason ?? "").trim();
+  if (!reason) throw new UserError("Give a reason for changing the amount");
+  const paise = i.finalPaise - totals.totalPaise;
+  if (paise > 0) {
+    if (lines[0].kind !== "session") throw new UserError("A counter sale can only be lowered");
+    if (i.role !== "owner") throw new UserError("Only the owner can raise the amount");
+    lines[0] = { ...lines[0], unitPaise: lines[0].unitPaise + paise };
+    return { totals: computeBill(lines, i.discount), paise, reason };
+  }
+  return { totals: computeBill(lines, { type: "flat", value: totals.discountPaise - paise }), paise, reason };
 }
 
 function checkDiscount(totals: { discountPaise: number; subtotalPaise: number }, reason: string, role: "owner" | "staff"): void {
@@ -100,15 +120,16 @@ function writeBill(b: {
   now: number;
   audit: string;
   action?: string; // audit action; by default bill.create / bill.counter
+  adjusted?: { paise: number; reason: string }; // the amount was changed when taking payment
 }): { billId: number; invoiceNo: number } {
   const invoiceNo = (get<{ n: number }>("SELECT COALESCE(MAX(invoice_no), 0) + 1 AS n FROM bills")?.n) ?? 1;
   const billId = Number(
     run(
       `INSERT INTO bills (invoice_no, session_id, customer_id, staff_id, subtotal_paise, discount_paise, discount_reason,
-                          tax_paise, total_paise, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+                          tax_paise, total_paise, created_at, adjusted_paise, adjusted_reason, adjusted_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       invoiceNo, b.sessionId, b.customerId, b.staffId, b.totals.subtotalPaise, b.totals.discountPaise, b.discountReason.trim(),
-      b.totals.taxPaise, b.totals.totalPaise, b.now,
+      b.totals.taxPaise, b.totals.totalPaise, b.now, b.adjusted?.paise ?? 0, b.adjusted?.reason ?? "", b.adjusted ? b.staffId : null,
     ).lastInsertRowid,
   );
   for (const l of b.lines) {
@@ -117,6 +138,10 @@ function writeBill(b: {
   for (const p of b.payments) run("INSERT INTO payments (bill_id, method, amount_paise) VALUES (?,?,?)", billId, p.method, p.amountPaise);
   deductForBill(billId, b.staffId, b.now);
   audit(b.staffId, b.action ?? (b.sessionId === null ? "bill.counter" : "bill.create"), `INV-${invoiceNo} ${b.audit}`, b.now);
+  if (b.adjusted) {
+    const was = b.totals.totalPaise - b.adjusted.paise;
+    audit(b.staffId, "bill.adjust", `INV-${invoiceNo}: ${was} -> ${b.totals.totalPaise} paise (${b.adjusted.reason})`, b.now);
+  }
   return { billId, invoiceNo };
 }
 
@@ -145,6 +170,8 @@ export type CounterSaleInput = {
   discount: Discount;
   discountReason: string;
   payments: PaymentInput[];
+  finalPaise?: number | null;
+  adjustReason?: string;
   now: number;
 };
 
@@ -152,28 +179,47 @@ export type CounterSaleInput = {
 export function finalizeCounterSale(i: CounterSaleInput): { billId: number; invoiceNo: number } {
   return tx(() => {
     const lines = counterLines(i.lines);
-    const totals = computeBill(lines, i.discount);
+    let totals = computeBill(lines, i.discount);
     checkDiscount(totals, i.discountReason, i.role);
+    const adj = adjustment(lines, totals, i);
+    totals = adj.totals;
     const bad = validatePayments(totals.totalPaise, i.payments);
     if (bad) throw new UserError(bad);
     return writeBill({
-      sessionId: null, customerId: null, lines, totals, discountReason: i.discountReason, payments: i.payments,
-      staffId: i.staffId, now: i.now, audit: `counter total ${totals.totalPaise}`,
+      sessionId: null, customerId: null, lines, totals, discountReason: adj.paise < 0 && !i.discountReason.trim() ? `Adjusted: ${adj.reason}` : i.discountReason, payments: i.payments,
+      staffId: i.staffId, now: i.now, audit: `counter total ${totals.totalPaise}`, adjusted: adj.paise === 0 ? undefined : { paise: adj.paise, reason: adj.reason },
     });
   });
 }
 
 export function voidBill(billId: number, reason: string, userId: string, role: "owner" | "staff", now: number): void {
-  if (role !== "owner") throw new UserError("Only the owner can void a bill");
-  if (!reason.trim()) throw new UserError("Give a reason for voiding this bill");
+  if (role !== "owner") throw new UserError("Only the owner can mark a bill invalid");
+  if (!reason.trim()) throw new UserError("Give a reason for marking this bill invalid");
   tx(() => {
     const b = get<{ status: string; invoiceNo: number }>("SELECT status, invoice_no AS invoiceNo FROM bills WHERE id = ?", billId);
     if (!b) throw new UserError("Bill not found");
-    if (b.status === "void") throw new UserError("This bill is already void");
+    if (b.status === "void") throw new UserError("This bill is already marked invalid");
     run("UPDATE bills SET status = 'void', void_reason = ?, voided_by = ? WHERE id = ?", reason.trim(), userId, billId);
     restoreForBill(billId, userId, now);
     audit(userId, "bill.void", `INV-${b.invoiceNo}: ${reason.trim()}`, now);
   });
+}
+
+export type AdjustNotice = { billId: number; invoiceNo: number; by: string; wasPaise: number; totalPaise: number; reason: string };
+
+/** Amount changes the owner has not looked at yet (for the bell). */
+export function unseenAdjustments(): AdjustNotice[] {
+  return all<AdjustNotice>(
+    `SELECT b.id AS billId, b.invoice_no AS invoiceNo, COALESCE(u.name, 'Removed staff') AS by, b.total_paise - b.adjusted_paise AS wasPaise,
+            b.total_paise AS totalPaise, b.adjusted_reason AS reason
+     FROM bills b LEFT JOIN user u ON u.id = b.adjusted_by WHERE b.adjusted_paise != 0 AND b.id > ? ORDER BY b.id DESC LIMIT 30`,
+    Number(getSetting("notice.adjustSeen")),
+  );
+}
+
+export function markAdjustmentsSeen(): void {
+  const top = get<{ id: number | null }>("SELECT MAX(id) AS id FROM bills WHERE adjusted_paise != 0")?.id ?? 0;
+  setSettings({ "notice.adjustSeen": String(top) });
 }
 
 export type BillSummary = {
@@ -240,6 +286,9 @@ export type BillDetail = BillSummary & {
   discountReason: string;
   taxPaise: number;
   voidReason: string | null;
+  adjustedPaise: number; // what was taken minus what the app worked out (negative = less); 0 when it was not changed
+  adjustedReason: string;
+  adjustedBy: string | null; // name
   staffId: string;
   lines: { kind: string; name: string; qty: number; unitPaise: number; taxPct: number }[];
   payments: { method: PaymentMethod; amountPaise: number }[];
@@ -260,7 +309,8 @@ function billRow(id: number) {
     `SELECT b.id, b.invoice_no AS invoiceNo, b.total_paise AS totalPaise, b.status, b.created_at AS createdAt,
             st.name AS stationName, c.name AS customerName, b.subtotal_paise AS subtotalPaise,
             b.discount_paise AS discountPaise, b.discount_reason AS discountReason, b.tax_paise AS taxPaise,
-            b.void_reason AS voidReason, b.staff_id AS staffId, b.entered_by_hand AS byHand
+            b.void_reason AS voidReason, b.staff_id AS staffId, b.entered_by_hand AS byHand,
+            b.adjusted_paise AS adjustedPaise, b.adjusted_reason AS adjustedReason, (SELECT name FROM user WHERE id = b.adjusted_by) AS adjustedBy
      FROM bills b
      LEFT JOIN sessions s ON s.id = b.session_id
      LEFT JOIN stations st ON st.id = s.station_id
@@ -269,23 +319,6 @@ function billRow(id: number) {
     id,
   );
   return r && { ...r, byHand: r.byHand === 1 };
-}
-
-export type TodaySummary = { bills: number; totalPaise: number; byMethod: Record<PaymentMethod, number> };
-
-/** Paid (not void) bills created at or after `sinceMs`, with the takings split by how they were paid. */
-export function todaySummary(sinceMs: number): TodaySummary {
-  const t = get<{ n: number; total: number }>(
-    "SELECT COUNT(*) AS n, COALESCE(SUM(total_paise), 0) AS total FROM bills WHERE status = 'paid' AND created_at >= ?",
-    sinceMs,
-  );
-  const byMethod: Record<PaymentMethod, number> = { cash: 0, upi: 0, card: 0 };
-  for (const r of all<{ method: PaymentMethod; paise: number }>(
-    `SELECT p.method, SUM(p.amount_paise) AS paise FROM payments p JOIN bills b ON b.id = p.bill_id
-     WHERE b.status = 'paid' AND b.created_at >= ? GROUP BY p.method`,
-    sinceMs,
-  )) byMethod[r.method] = r.paise;
-  return { bills: t?.n ?? 0, totalPaise: t?.total ?? 0, byMethod };
 }
 
 export type PastBillInput = {
@@ -317,12 +350,12 @@ export function addPastBill(i: PastBillInput, now = Date.now()): { billId: numbe
     const st = get<{ name: string }>("SELECT name FROM stations WHERE id = ? AND active = 1", i.stationId);
     if (!st) throw new UserError("Station not found");
     if (i.customerId !== null && !get("SELECT 1 AS x FROM customers WHERE id = ?", i.customerId)) throw new UserError("Customer not found");
-    const rate: RateSnapshot = { rateId: 0, name: "Added by hand", hourlyPaise: Math.round((i.timePaise * 60) / i.minutes), extraControllerPaise: 0, incrementMin: 1, minMinutes: 0, graceMin: 0 };
+    const rate: RateSnapshot = { rateId: 0, name: "Added by hand", hourlyPaise: Math.round((i.timePaise * 60) / i.minutes), extraControllerPaise: 0, incrementMin: 1 };
     const sessionId = Number(
       run(
-        `INSERT INTO sessions (station_id, customer_id, staff_id, mode, started_at, ended_at, players, rate_json, notes, billed)
-         VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, 1)`,
-        i.stationId, i.customerId, i.staffId, i.startedAt, endedAt, JSON.stringify(rate), i.note.trim().slice(0, 500),
+        `INSERT INTO sessions (station_id, customer_id, staff_id, mode, started_at, planned_minutes, ended_at, players, rate_json, notes, billed)
+         VALUES (?, ?, ?, 'fixed', ?, ?, ?, 1, ?, ?, 1)`,
+        i.stationId, i.customerId, i.staffId, i.startedAt, i.minutes, endedAt, JSON.stringify(rate), i.note.trim().slice(0, 500),
       ).lastInsertRowid,
     );
     const taxPct = lineTaxPct();

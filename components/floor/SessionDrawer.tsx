@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
-import { Pause, Play, Plus, Square, Undo2, X } from "lucide-react";
+import { AlarmClock, Ban, Gamepad2, Pause, Play, Plus, Square, Undo2, X } from "lucide-react";
 import { Modal } from "@/components/modal";
 import { useCall } from "@/lib/useCall";
-import { addItemAction, addMenuItemAction, extendAction, notesAction, pauseAction, removeItemAction, reopenAction, resumeAction, stopAction, transferAction } from "@/app/(app)/actions";
-import { liveInfo } from "@/lib/live";
+import { useToast } from "@/components/toast";
+import { addControllerAction, addItemAction, addMenuItemAction, cancelSessionAction, extendAction, notesAction, pauseAction, removeItemAction, reopenAction, resumeAction, stopAction, transferAction } from "@/app/(app)/actions";
+import { liveInfo, playerCount } from "@/lib/live";
 import { clock, hms, rupees } from "@/lib/format";
 import { btnCls, btnDangerCls, btnPrimaryCls, inputCls, labelCls } from "@/lib/ui";
 import type { BoardStation } from "@/lib/db/sessions";
@@ -26,6 +27,7 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
 }) {
   const s = station.session!;
   const { call, pending } = useCall();
+  const toast = useToast();
   const info = liveInfo(s, leadMin, now);
   const st = STATUS[info.status];
   const Icon = st.icon;
@@ -33,8 +35,15 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
   const [other, setOther] = useState(false); // the "something not on the menu" form is closed until asked for
   const itemsKey = s.items.map((i) => `${i.id}x${i.qty}`).join(","); // the bill is recalculated when the tab changes
   const [notes, setNotes] = useState(s.notes);
+  const [cancelling, setCancelling] = useState(false); // owner only: the "started by mistake" form
+  const [why, setWhy] = useState("");
   const free = siblings.filter((x) => x.id !== station.id && !x.session && !x.maintenance);
   const canExtend = s.plannedMinutes !== null && !info.stopped;
+  const timeUp = info.status === "timeup";
+  const [more, setMore] = useState(""); // custom minutes to add
+  // What one more controller would cost: the extra-controller price for the rest of the planned time.
+  const minutesLeft = s.plannedMinutes === null ? 0 : Math.max(0, s.plannedMinutes - Math.ceil(info.playedMs / 60000));
+  const controllerCost = Math.round((s.rate.extraControllerPaise * minutesLeft) / 60);
 
   return (
     <Modal open onClose={onClose} title={`${station.name} · ${zoneName}`} side>
@@ -43,10 +52,10 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
           <div>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${st.chip}`}><Icon className="size-3.5" />{st.label}</span>
             <div className="tnum mt-2 font-display text-5xl font-bold leading-none">
-              {info.remainingMs !== null && !info.stopped ? (info.remainingMs < 0 ? `+${hms(-info.remainingMs)}` : hms(info.remainingMs)) : hms(info.playedMs)}
+              {info.remainingMs !== null && !info.stopped ? hms(info.remainingMs) : hms(info.playedMs)}
             </div>
             <div className="mt-1 text-sm text-mute">
-              Started {clock(s.startedAt)} · {s.customerName ?? "Walk-in"} · {s.players} {s.players === 1 ? "player" : "players"}
+              Started {clock(s.startedAt)} · {s.customerName ?? "Walk-in"} · {playerCount(s)} {playerCount(s) === 1 ? "player" : "players"}
               {s.plannedMinutes ? ` · ${s.plannedMinutes} min` : ""}
             </div>
           </div>
@@ -59,8 +68,14 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
 
         {!info.stopped && (
           <>
+            {timeUp && (
+              <div role="status" className="flex gap-3 rounded-xl border border-over/40 bg-over/10 p-4 text-sm">
+                <AlarmClock className="mt-0.5 size-5 shrink-0 text-over" aria-hidden />
+                <p className="text-silver"><b className="text-ink">Time&apos;s up.</b> The clock has stopped at {s.plannedMinutes} minutes and nothing more is being charged. Add time to keep playing, or stop and take payment.</p>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
-              {s.pausedAt === null ? (
+              {timeUp ? null : s.pausedAt === null ? (
                 <button disabled={pending} className={btnCls} onClick={() => call(() => pauseAction(s.id))}><Pause className="size-4" /> Pause</button>
               ) : (
                 <button disabled={pending} className={btnPrimaryCls} onClick={() => call(() => resumeAction(s.id))}><Play className="size-4" /> Resume</button>
@@ -68,8 +83,38 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
               {canExtend && [15, 30, 60].map((m) => (
                 <button key={m} disabled={pending} className={btnCls} onClick={() => call(() => extendAction(s.id, m), { ok: `Extended by ${m} min` })}>+{m} min</button>
               ))}
-              <button disabled={pending} className={`${btnDangerCls} ml-auto`} onClick={() => call(() => stopAction(s.id))}><Square className="size-4" /> Stop</button>
+              <button disabled={pending} className={`${btnDangerCls} ml-auto`} onClick={() => call(() => stopAction(s.id))}><Square className="size-4" /> {timeUp ? "Stop & take payment" : "Stop"}</button>
             </div>
+
+            {canExtend && (
+              <form
+                className="flex items-end gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const m = Number(more);
+                  call(() => extendAction(s.id, m), { ok: `Added ${m} min`, onOk: () => setMore("") });
+                }}
+              >
+                <div className="w-44">
+                  <label htmlFor="more" className={labelCls}>Add other time (minutes)</label>
+                  <input id="more" inputMode="numeric" placeholder="e.g. 20" className={inputCls} value={more} onChange={(e) => setMore(e.target.value.replace(/\D/g, ""))} />
+                </div>
+                <button disabled={pending || !more || Number(more) < 1} className={btnCls}>Add time</button>
+              </form>
+            )}
+
+            {!timeUp && (
+              <div className="flex flex-wrap items-center gap-3">
+                <button disabled={pending || playerCount(s) >= 20} className={btnCls} onClick={() => call(() => addControllerAction(s.id), { ok: "Controller added" })}>
+                  <Gamepad2 className="size-4" /> Add a controller
+                </button>
+                <span className="text-xs text-mute">
+                  {s.rate.extraControllerPaise > 0
+                    ? `${rupees(controllerCost)} for the rest of the time (${rupees(s.rate.extraControllerPaise)}/hr each)`
+                    : "No extra-controller price is set, so this is free. The owner can set one in Settings, Rates."}
+                </span>
+              </div>
+            )}
 
             {free.length > 0 && (
               <div>
@@ -99,7 +144,7 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
           )}
           {menu.length > 0 && (
             <div className="mb-3">
-              <MenuPicker items={menu} disabled={pending} onPick={(m) => call(() => addMenuItemAction(s.id, m.id, 1))} />
+              <MenuPicker items={menu} disabled={pending} onPick={(m) => call(() => addMenuItemAction(s.id, m.id, 1), { onOk: (r) => r.warning && toast("info", r.warning) })} />
             </div>
           )}
           {menu.length > 0 && (
@@ -127,6 +172,32 @@ export function SessionDrawer({ station, zoneName, menu, siblings, now, leadMin,
           <label className={labelCls} htmlFor="nt">Notes</label>
           <textarea id="nt" rows={2} className={inputCls} placeholder="Notes about this session, e.g. birthday group" value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={() => notes !== s.notes && call(() => notesAction(s.id, notes))} />
         </section>
+
+        {role === "owner" && (
+          <section className="border-t border-line pt-4">
+            {!cancelling ? (
+              <button type="button" className={btnCls} onClick={() => setCancelling(true)}><Ban className="size-4" /> Cancel session (started by mistake)</button>
+            ) : (
+              <form
+                className="space-y-3 rounded-lg border border-over/40 bg-over/5 p-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  call(() => cancelSessionAction(s.id, why), { ok: "Session cancelled", onOk: onClose });
+                }}
+              >
+                <p className="text-sm text-silver">Closes this session with no bill and nothing charged. Food and extras on its tab are dropped. It stays in your records as cancelled, with the reason, and is left out of every total.</p>
+                <div>
+                  <label htmlFor="cwhy" className={labelCls}>Reason</label>
+                  <input id="cwhy" required maxLength={200} placeholder="e.g. started on the wrong station" className={inputCls} value={why} onChange={(e) => setWhy(e.target.value)} />
+                </div>
+                <div className="flex gap-2">
+                  <button disabled={pending} className={btnDangerCls}>Cancel the session</button>
+                  <button type="button" className={btnCls} onClick={() => setCancelling(false)}>Keep it</button>
+                </div>
+              </form>
+            )}
+          </section>
+        )}
 
         {info.stopped && (
           <section className="space-y-4 border-t border-line pt-5">

@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Boxes, ChartColumn, ChevronsLeft, LayoutGrid, LogOut, Power, Receipt, Settings, Users } from "lucide-react";
@@ -22,6 +22,15 @@ const LINKS = [
 
 // Same box for every sidebar entry. Below 1280px the sidebar is a top bar of icons; from 1280px it is a labelled column
 // (or icon-only when collapsed: the .side-* rules in globals.css handle that).
+/** True while the app answers. */
+async function alive(): Promise<boolean> {
+  try {
+    return (await fetch("/api/health", { cache: "no-store" })).ok;
+  } catch {
+    return false;
+  }
+}
+
 const item =
   "side-link flex size-10 items-center justify-center gap-3 rounded-2xl transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand sm:size-11 xl:size-auto xl:justify-start xl:px-3.5 xl:py-2.5";
 
@@ -51,10 +60,39 @@ export function AppShell({ name, brand, role, initialCollapsed, lowStock, tools,
   const [quit, setQuit] = useState<"no" | "busy" | "done">("no");
   const [quitError, setQuitError] = useState("");
 
+  const [offline, setOffline] = useState(false);
+
+  // The app can be stopped from outside (stop.bat, a restart, a crash). Ask it every few seconds; when it stops answering, say so
+  // instead of leaving buttons that silently do nothing, and when it comes back, reload (the sign-in page: stopping signs everyone out).
+  useEffect(() => {
+    let fails = 0;
+    let down = false;
+    const id = setInterval(async () => {
+      if (await alive()) {
+        fails = 0;
+        if (down) location.reload();
+      } else if (++fails >= 2) {
+        down = true;
+        setOffline(true);
+      }
+    }, 4000);
+    return () => clearInterval(id);
+  }, []);
+
   const stopApp = async () => {
     setQuit("busy");
-    const r = await quitAppAction();
-    if (!r.ok) {
+    let r: Awaited<ReturnType<typeof quitAppAction>> | null = null;
+    try {
+      r = await quitAppAction();
+    } catch {
+      // No reply: either it is already stopped, or something broke. Ask it directly.
+      if (await alive()) {
+        setQuit("no");
+        setQuitError("The app did not stop. Please try again.");
+        return;
+      }
+    }
+    if (r && !r.ok) {
       setQuit("no");
       setQuitError(r.error);
       return;
@@ -165,11 +203,11 @@ export function AppShell({ name, brand, role, initialCollapsed, lowStock, tools,
           </div>
         </div>
       </Modal>
-      {quit === "done" && (
+      {(quit === "done" || offline) && (
         <div role="alert" className="fixed inset-0 z-50 grid place-items-center bg-bg p-6 text-center">
           <div>
-            <h1 className="font-display text-3xl font-bold tracking-wide">The app has been stopped</h1>
-            <p className="mt-2 text-silver">You can close this window. To use it again, double-click the Gaming Lounge icon on the Desktop.</p>
+            <h1 className="font-display text-3xl font-bold tracking-wide">{quit === "done" ? "The app has been stopped" : "The app is not running"}</h1>
+            <p className="mt-2 text-silver">You can close this window. To use it again, double-click the Gaming Lounge icon on the Desktop. If this window is still open then, it reconnects by itself and asks you to sign in.</p>
           </div>
         </div>
       )}

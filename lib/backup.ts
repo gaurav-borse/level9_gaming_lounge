@@ -65,6 +65,22 @@ export function makeBackup(db: DatabaseSync, dir: string, o: { second?: string; 
   return { name, copyError };
 }
 
+/**
+ * Is the second-folder copy keeping up? null when no second folder is set; otherwise a sentence saying what is wrong, or "" when all is well.
+ * The copy is made together with each backup, so it is behind when the newest automatic backup there is older than the one on this computer
+ * (a USB drive that was pulled out, a full disk, a folder that was renamed).
+ */
+export function secondCopyProblem(mainDir: string, second: string): string | null {
+  if (!second) return null;
+  if (!fs.existsSync(second)) return `The backup folder ${second} cannot be reached. Is the USB drive plugged in?`;
+  const mine = listBackups(mainDir).find((b) => b.kind === "auto");
+  const theirs = listBackups(second).find((b) => b.kind === "auto");
+  if (!mine) return "";
+  if (!theirs) return `No backup has been copied to ${second} yet.`;
+  if (mine.at - theirs.at > 60 * 60 * 1000) return `The copy in ${second} is behind (last copied ${new Date(theirs.at).toLocaleString("en-IN")}). Check the drive has room and is plugged in.`;
+  return "";
+}
+
 /** At startup and every hour: back up when the newest automatic backup is older than 6 hours. Returns whether one was made. */
 export function ensureRecentBackup(db: DatabaseSync, dir: string, o: { second?: string; now?: number } = {}): boolean {
   const now = o.now ?? Date.now();
@@ -85,6 +101,9 @@ export function checkBackupFile(file: string): number {
     if (version > MIGRATIONS.length) throw new UserError("That backup comes from a newer version of the app");
     const tables = new Set((src.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name));
     for (const t of ["settings", "bills", "customers", "sessions", "user"]) if (!tables.has(t)) throw new UserError("That file is not a backup of this app");
+    let owner = false;
+    try { owner = src.prepare("SELECT 1 AS x FROM user WHERE role = 'owner' LIMIT 1").get() !== undefined; } catch { /* no role column: an unusable backup */ }
+    if (!owner) throw new UserError("That backup has no owner account, so nobody could sign in after restoring it");
     return version;
   } catch (e) {
     if (e instanceof UserError) throw e;

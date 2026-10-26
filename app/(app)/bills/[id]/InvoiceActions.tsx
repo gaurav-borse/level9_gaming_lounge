@@ -15,21 +15,21 @@ export function InvoiceActions({ billId, canVoid }: { billId: number; canVoid: b
       <button type="button" className={btnCls} onClick={() => window.print()}><FileDown className="size-4" /> Save as PDF</button>
       {canVoid && (
         <>
-          <button type="button" className={btnDangerCls} onClick={() => setOpen(true)}><Ban className="size-4" /> Void bill</button>
-          <Modal open={open} onClose={() => setOpen(false)} title="Void this bill?">
+          <button type="button" className={btnDangerCls} onClick={() => setOpen(true)}><Ban className="size-4" /> Mark as invalid</button>
+          <Modal open={open} onClose={() => setOpen(false)} title="Mark this bill as invalid?">
             <form
               className="space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                call(() => voidBillAction(billId, reason), { ok: "Bill voided", onOk: () => setOpen(false) });
+                call(() => voidBillAction(billId, reason), { ok: "Bill marked invalid", onOk: () => setOpen(false) });
               }}
             >
-              <p className="text-sm text-silver">The bill stays in your records marked void. This can&apos;t be undone.</p>
+              <p className="text-sm text-silver">The bill stays in your records, marked invalid, and is left out of every report and total. Stock it used is put back. This can&apos;t be undone.</p>
               <div>
                 <label htmlFor="vr" className={labelCls}>Reason</label>
-                <input id="vr" required placeholder="Why is this bill being voided? e.g. wrong item" className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} />
+                <input id="vr" required placeholder="Why is it invalid? e.g. session started by mistake" className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} />
               </div>
-              <button disabled={pending} className={btnPrimaryCls}>Void bill</button>
+              <button disabled={pending} className={btnPrimaryCls}>Mark as invalid</button>
             </form>
           </Modal>
         </>

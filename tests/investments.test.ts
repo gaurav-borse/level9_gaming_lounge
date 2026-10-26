@@ -16,7 +16,7 @@ const DAY = 24 * 60 * MIN;
 const L = (rupees: number) => rupees * 100;
 
 function sale(kind: string, minutes: number, at: number, o: { discount?: { type: "percent" | "flat"; value: number }; item?: [string, number, number] } = {}) {
-  const s = startSession({ stationId: station(kind), staffId: "u1", mode: "open", players: 1, customerId: null, now: at });
+  const s = startSession({ stationId: station(kind), staffId: "u1", plannedMinutes: minutes, players: 1, customerId: null, now: at });
   if (o.item) addItem(s, o.item[0], o.item[1], o.item[2], at + MIN);
   stopSession(s, at + minutes * MIN, "u1");
   const draft = buildDraft(s, at + minutes * MIN).lines;

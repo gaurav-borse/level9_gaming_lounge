@@ -24,7 +24,7 @@ test("bills: the count and the pages always use the same filter", () => {
   const ids: number[] = [];
   for (let i = 0; i < 9; i++) {
     const at = T0 + i * 3 * 60 * MIN;
-    const s = startSession({ stationId: station(i % 2 ? "ps5" : "pc"), staffId: "u1", mode: "open", players: 1, customerId: null, now: at });
+    const s = startSession({ stationId: station(i % 2 ? "ps5" : "pc"), staffId: "u1", plannedMinutes: 1, players: 1, customerId: null, now: at });
     stopSession(s, at + 30 * MIN, "u1");
     const total = buildDraft(s, at + 30 * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
     ids.push(finalizeBill({ sessionId: s, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: i % 3 ? "cash" : "upi", amountPaise: total }], now: at + 31 * MIN }).billId);

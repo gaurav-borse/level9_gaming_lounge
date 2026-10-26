@@ -15,7 +15,7 @@ import { UserError } from "../lib/errors.ts";
 // The sign-in system's "user" table lives beside ours in the real database; a stub stands in for it here.
 beforeEach(() => {
   freshDb();
-  getDb().exec("CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
+  getDb().exec("DROP TABLE IF EXISTS user; CREATE TABLE user (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
   getDb().prepare("INSERT INTO user VALUES ('u1', 'Owner')").run();
 });
 
@@ -41,7 +41,7 @@ test("a bill added by hand is a normal paid bill: lines, payment, invoice number
   assert.equal(getBill(second.billId)!.lines.length, 1, "no food line when nothing was paid for food");
 
   const s = get<{ startedAt: number; endedAt: number; billed: number; notes: string; mode: string }>("SELECT started_at AS startedAt, ended_at AS endedAt, billed, notes, mode FROM sessions WHERE id = (SELECT session_id FROM bills WHERE id = ?)", second.billId)!;
-  assert.deepEqual([s.startedAt, s.endedAt, s.billed, s.notes, s.mode], [START + 3 * 60 * MIN, START + 3 * 60 * MIN + 90 * MIN, 1, "paper register", "open"]);
+  assert.deepEqual([s.startedAt, s.endedAt, s.billed, s.notes, s.mode], [START + 3 * 60 * MIN, START + 3 * 60 * MIN + 90 * MIN, 1, "paper register", "fixed"]);
   assert.equal(listBills(10).find((x) => x.id === first.billId)!.byHand, true);
   assert.equal(count("sessions"), 2);
   assert.ok(all<{ action: string }>("SELECT action FROM audit_log").some((a) => a.action === "bill.manual"));

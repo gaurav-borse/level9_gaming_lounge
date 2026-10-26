@@ -96,10 +96,10 @@ export function CafeTab() {
         <h2 className="pt-2 font-display text-xl font-semibold">Alerts</h2>
         <div className="flex flex-col gap-3">
           <label className="flex items-center gap-2 text-sm text-silver">
-            <input type="checkbox" name="alerts" defaultChecked={s["alert.enabled"] === "1"} className="size-4 accent-brand" /> Show alerts: the bell icon, and a pop-up message when a session is about to end or has run over time
+            <input type="checkbox" name="alerts" defaultChecked={s["alert.enabled"] === "1"} className="size-4 accent-brand" /> Show alerts: the bell icon, and a pop-up message when a session is about to end or its time is up
           </label>
           <label className="flex items-center gap-2 text-sm text-silver">
-            <input type="checkbox" name="alertSound" defaultChecked={s["alert.sound"] === "1"} className="size-4 accent-brand" /> Beep as well: a loud alarm sound when a session is about to end or has run over time
+            <input type="checkbox" name="alertSound" defaultChecked={s["alert.sound"] === "1"} className="size-4 accent-brand" /> Beep as well: a loud alarm sound when a session is about to end or its time is up
           </label>
           <TestSound />
         </div>

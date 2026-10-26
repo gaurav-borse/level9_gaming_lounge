@@ -132,7 +132,7 @@ await step("start a session: bad input refused, good input runs, double start re
   const ok = await call("startSessionAction", [{ stationId: ps5, mode: "fixed", players: 2, customerId: null, minutes: 60 }], owner);
   assert.equal(ok.result.ok, true);
   sessionId = ok.result.data;
-  const dup = await call("startSessionAction", [{ stationId: ps5, mode: "open", players: 1, customerId: null }], owner);
+  const dup = await call("startSessionAction", [{ stationId: ps5, minutes: 1, players: 1, customerId: null }], owner);
   assert.match(dup.result.error, /already in use/);
   assert.equal(q("SELECT rate_json AS r FROM sessions WHERE id = ?", sessionId).length, 1);
   assert.match((await (await get("/", owner)).text()), /Ending soon|Running/);
@@ -188,13 +188,13 @@ await step("staff: created by the owner, can run the floor, cannot reach owner-o
   staff = login.cookie;
   assert.equal((await get("/", staff)).status, 200);
   assert.equal((await get("/settings", staff)).status, 307); // bounced to the floor
-  assert.equal((await call("voidBillAction", [billId, "nope"], staff)).result.error, "Only the owner can void a bill");
+  assert.equal((await call("voidBillAction", [billId, "nope"], staff)).result.error, "Only the owner can mark a bill invalid");
   await form("saveCafeAction", { cafeName: "Level 9 Gaming Lounge", address: "Hijacked", upiId: "evil@bank", gstPct: "18", leadMin: "10", maxDiscount: "10" }, staff);
   assert.notEqual(q("SELECT value FROM settings WHERE key='cafe.address'")[0].value, "Hijacked");
   assert.equal(q("SELECT count(*) AS n FROM settings WHERE key='cafe.upiId' AND value='evil@bank'")[0].n, 0);
   await form("createStaffAction", { name: "Evil", username: "evil", pin: "9999" }, staff);
   assert.equal(q("SELECT count(*) AS n FROM user WHERE username = 'evil'")[0].n, 0);
-  const s = await call("startSessionAction", [{ stationId: station("Pool 1"), mode: "open", players: 1, customerId: null }], staff);
+  const s = await call("startSessionAction", [{ stationId: station("Pool 1"), minutes: 1, players: 1, customerId: null }], staff);
   assert.equal(s.result.ok, true);
 });
 
@@ -273,7 +273,8 @@ await step("main colour: cookie recolours the first paint, junk falls back to te
   const body = async (cookie) => (await get("/", cookie)).text();
   assert.doesNotMatch(await body(owner), /data-collapsed="true"/);
   assert.match(await body(`${owner}; sidebar=collapsed`), /data-collapsed="true"/);
-  assert.ok((await body(owner)).includes("Today"), "floor shows the Today card");
+  const floor = await body(owner);
+  assert.ok(!floor.includes("No bills yet today") && !floor.includes("See bills"), "the floor shows no takings");
 });
 
 await step("menu and stock: owner builds a menu, staff restock but cannot edit, tab item and counter sale move stock, void puts it back", async () => {
@@ -307,7 +308,7 @@ await step("menu and stock: owner builds a menu, staff restock but cannot edit, 
 
   // on a tab: nothing leaves stock until the bill is paid
   const pc = station("PC 1");
-  const started = await call("startSessionAction", [{ stationId: pc, mode: "open", players: 1, customerId: null }], owner);
+  const started = await call("startSessionAction", [{ stationId: pc, minutes: 1, players: 1, customerId: null }], owner);
   assert.equal(started.result.ok, true);
   const sid = started.result.data;
   assert.equal((await call("addMenuItemAction", [sid, coke.id, 2], owner)).result.ok, true);
@@ -366,7 +367,7 @@ await step("bills: payment column, search by invoice/station/counter, filter by 
   assert.ok(!(await page("?method=card")).includes("INV-0000"), "no card bills, nothing listed");
   assert.ok((await page("?method=card")).includes("No bills match"), "and it says so");
   assert.ok((await page("?method=upi")).includes("Counter sale"), "UPI filter finds the counter sale");
-  assert.ok((await page("?status=void")).includes("Void") && !(await page("?status=void")).includes("Paid</span>"), "void filter");
+  assert.ok((await page("?status=void")).includes("Invalid") && !(await page("?status=void")).includes("Paid</span>"), "void filter");
   const today = new Date().toLocaleDateString("en-CA");
   assert.ok((await page(`?from=${today}&to=${today}`)).includes("INV-0000"), "today is inside today");
   assert.ok((await page("?from=2020-01-01&to=2020-01-02")).includes("No bills match"), "an old date range is empty");
@@ -390,7 +391,7 @@ await step("customers: staff and owner can add and edit, search works, spend cou
   assert.equal((await get("/customers/99999", owner)).status, 404);
   assert.equal((await get("/customers", "")).status, 307, "signed-out visitors are sent to sign in");
 
-  const s = await call("startSessionAction", [{ stationId: station("Sim 1"), mode: "open", players: 1, customerId: id }], owner);
+  const s = await call("startSessionAction", [{ stationId: station("Sim 1"), minutes: 1, players: 1, customerId: id }], owner);
   await call("stopAction", [s.result.data], owner);
   const total = (await call("getDraftAction", [s.result.data], owner)).result.data.lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
   await call("finalizeBillAction", [{ sessionId: s.result.data, discountType: "none", discountValue: "", reason: "", payments: [{ method: "upi", rupees: (total / 100).toFixed(2) }] }], owner);
@@ -426,25 +427,25 @@ await step("sign-in picture: built-in by default, owner uploads and resets it, j
 await step("zones, stations and rates: add a rate window, duplicates refused", async () => {
   const zone = q("SELECT id FROM zones WHERE kind = 'ps5'")[0].id;
   const days = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((d) => [`d${d}`, "on"]));
-  await form("saveRateAction", { zoneId: zone, name: "Happy hour", hourly: "100", extra: "", increment: "1", min: "15", grace: "0", from: "14:00", to: "17:00", priority: "5", ...days }, owner);
+  await form("saveRateAction", { zoneId: zone, name: "Happy hour", hourly: "100", extra: "", increment: "1", from: "14:00", to: "17:00", priority: "5", ...days }, owner);
   assert.equal(q("SELECT count(*) AS n FROM rates WHERE name = 'Happy hour'")[0].n, 1);
   // From and Until are optional: blank means all day.
-  await form("saveRateAction", { zoneId: zone, name: "Weekend", hourly: "120", extra: "", increment: "1", min: "15", grace: "0", from: "", to: "", priority: "10", d0: "on", d6: "on" }, owner);
+  await form("saveRateAction", { zoneId: zone, name: "Weekend", hourly: "120", extra: "", increment: "1", from: "", to: "", priority: "10", d0: "on", d6: "on" }, owner);
   const weekend = q("SELECT id, from_min AS f, to_min AS t, days_mask AS d FROM rates WHERE name = 'Weekend'")[0];
   assert.deepEqual([weekend.f, weekend.t, weekend.d], [0, 1440, 65], "no times means all day");
   await form("archiveRateAction", { id: weekend.id }, owner);
-  await form("saveRateAction", { zoneId: zone, name: "Evening", hourly: "180", extra: "", increment: "1", min: "15", grace: "0", from: "18:00", to: "00:00", priority: "10", ...days }, owner);
+  await form("saveRateAction", { zoneId: zone, name: "Evening", hourly: "180", extra: "", increment: "1", from: "18:00", to: "00:00", priority: "10", ...days }, owner);
   const evening = q("SELECT id, from_min AS f, to_min AS t FROM rates WHERE name = 'Evening'")[0];
   assert.deepEqual([evening?.f, evening?.t], [1080, 1440], "until 00:00 means midnight, not a crash");
   await form("archiveRateAction", { id: evening.id }, owner);
   // The simple Rates page: the normal price form hides name, days, times and priority; a special price form adds days and times.
   const normalId = q("SELECT id FROM rates WHERE zone_id = ? AND name = 'Standard'", zone)[0].id;
-  await form("saveRateAction", { id: normalId, zoneId: zone, name: "Standard", hourly: "160", extra: "", increment: "1", min: "15", grace: "0", from: "00:00", to: "24:00", priority: "0", ...days }, owner);
+  await form("saveRateAction", { id: normalId, zoneId: zone, name: "Standard", hourly: "160", extra: "", increment: "1", from: "00:00", to: "24:00", priority: "0", ...days }, owner);
   assert.equal(q("SELECT hourly_paise AS h FROM rates WHERE id = ?", normalId)[0].h, 16000, "the normal price can be changed with just the price");
   const rates = await (await get("/settings?tab=rates", owner)).text();
   assert.ok(rates.includes("Normal price") && rates.includes("Special prices") && rates.includes("Happy hour") && rates.includes("Every day · 14:00–17:00"), "the rates page shows normal and special prices");
   assert.ok(!rates.includes(">Priority<"), "no priority box any more");
-  await form("saveRateAction", { zoneId: zone, name: "Broken", hourly: "-5", increment: "1", min: "15", grace: "0", from: "14:00", to: "17:00", priority: "5", ...days }, owner);
+  await form("saveRateAction", { zoneId: zone, name: "Broken", hourly: "-5", increment: "1", from: "14:00", to: "17:00", priority: "5", ...days }, owner);
   assert.equal(q("SELECT count(*) AS n FROM rates WHERE name = 'Broken'")[0].n, 0);
   await form("createStationAction", { zoneId: zone, name: "PS5 1" }, owner);
   assert.equal(q("SELECT count(*) AS n FROM stations WHERE name = 'PS5 1' AND active = 1")[0].n, 1);
@@ -455,9 +456,9 @@ await step("zones, stations and rates: add a rate window, duplicates refused", a
 await step("whatsapp: tray offers messages to customers with a phone, staff can't change settings, opened messages leave the tray", async () => {
   await form("addCustomerAction", { name: "Wanda Wu", phone: "98765 11111" }, staff);
   const id = q("SELECT id FROM customers WHERE name = 'Wanda Wu'")[0].id;
-  const s = await call("startSessionAction", [{ stationId: station("PS5 2"), mode: "open", players: 1, customerId: id }], staff);
+  const s = await call("startSessionAction", [{ stationId: station("PS5 2"), minutes: 60, players: 1, customerId: id }], staff);
   const tray = async () => [...new Set((await (await get("/", staff)).text()).replaceAll("&#x27;", "'").match(/https:\/\/wa\.me\/919876511111\?text=[^"\\]*/g) ?? [])]; // the page carries each link twice (markup and payload); React escapes the apostrophe in the markup
-  assert.equal((await tray()).length, 2, "welcome and session-started messages are waiting: ");
+  assert.equal((await tray()).length, 3, "welcome, session-started and the ending reminder are waiting");
   assert.ok(decodeURIComponent((await tray())[0]).includes("Wanda Wu"));
 
   await form("saveWhatsAppAction", { enabled: "on", started: "on", "tpl-started": "Custom {name}" }, staff);
@@ -513,7 +514,9 @@ await step("paging: any page number in the address is safe on Bills, Customers, 
   for (const url of ["/bills?page=999", "/bills?page=abc&q=x", "/bills?page=-4", "/bills?size=7", "/bills?size=100", "/customers?page=999", "/customers?page=0&q=zzz", "/customers?size=500", "/customers/1?page=77&size=20", "/settings?tab=activity&page=999&size=30"]) {
     assert.equal((await get(url, owner)).status, 200, url);
   }
-  assert.ok((await (await get("/settings?tab=activity&page=999", owner)).text()).includes("Changed"), "past the end shows the last page, not an empty one");
+  const past = (await (await get("/settings?tab=activity&page=999", owner)).text()).replaceAll("<!-- -->", "");
+  const shown = /Showing (\d+)–(\d+) of (\d+)/.exec(past);
+  assert.ok(shown && Number(shown[1]) <= Number(shown[2]) && Number(shown[2]) === Number(shown[3]), "past the end shows the last page, not an empty one");
   for (const [url, who] of [["/bills", "staff"], ["/customers", "staff"], ["/customers/1", "staff"], ["/settings?tab=activity", "owner"]]) {
     const html = (await (await get(url, who === "owner" ? owner : staff)).text()).replaceAll("<!-- -->", ""); // React separates text pieces with comments
     assert.ok(html.includes("Rows per page") && /Showing 1–\d+ of \d+/.test(html), `${url} shows the page-size choice and the count even when everything fits on one page`);
@@ -539,6 +542,7 @@ await step("reports and expenses: owner only, expenses add and delete, net profi
   assert.equal((await get("/reports")).status, 307, "signed-out visitors cannot");
   const page = await (await get("/reports?range=month", owner)).text();
   for (const t of ["Takings", "Net profit", "Takings by day", "How it was paid", "From sales to net profit", "Show the exact numbers"]) assert.ok(page.includes(t), `Reports overview shows "${t}"`);
+  assert.ok(page.includes("Marked invalid") && page.includes("Not counted in any figure"), "bills marked invalid are listed on the overview (an earlier step marked one)");
   const sales = await (await get("/reports?range=month&tab=sales", owner)).text();
   for (const t of ["Time or food?", "By zone", "By station", "Best sellers", "By staff", "Show every figure, with totals"]) assert.ok(sales.includes(t), `Sales tab shows "${t}"`);
   assert.ok((await (await get("/reports?range=month&tab=daily", owner)).text()).includes("Every day"), "Day by day tab");
@@ -605,12 +609,13 @@ await step("backups: back up now, second folder, restore returns the old data, j
 
 await step("activity log: the owner can read it; the Rates page has no packages", async () => {
   const log = await (await get("/settings?tab=activity&size=100", owner)).text(); // 100 rows: the first page of 10 only holds the newest entries
-  assert.ok(log.includes("Voided a bill") || log.includes("Saved a price"), "the log is in plain words");
+  assert.ok(log.includes("Marked a bill invalid") || log.includes("Saved a price"), "the log is in plain words");
   assert.ok(log.includes("Restored a backup"), "restores show up in it");
   assert.ok((await (await get("/settings?tab=activity&q=zzzznothing", owner)).text()).includes("Nothing matches"), "search works");
   assert.equal((await get("/settings?tab=activity", staff)).status, 307, "staff cannot read the log");
   const rates = await (await get("/settings?tab=rates", owner)).text();
   assert.ok(!/package/i.test(rates), "packages are gone from the Rates page");
+  assert.ok(!rates.includes("Minimum charge") && !rates.includes("Free minutes"), "the minimum charge and free minutes fields are gone");
   assert.ok(rates.includes("+ Add a special price"));
 });
 
@@ -678,6 +683,61 @@ await step("past bills: the owner adds a bill from before the app, it is a norma
   assert.ok((await (await get(`/bills/${bill.id}`, owner)).text()).includes("Added by hand"), "and so does the invoice");
 });
 
+await step("cancel a session started by mistake: owner only, needs a reason, no bill, station free, listed on Reports", async () => {
+  const sim = station("Sim 1");
+  const id = (await call("startSessionAction", [{ stationId: sim, players: 1, customerId: null, minutes: 30 }], owner)).result.data;
+  assert.equal((await call("cancelSessionAction", [id, "oops"], staff)).result.error, "Only the owner can cancel a session");
+  assert.equal((await call("cancelSessionAction", [id, "  "], owner)).result.ok, false, "a reason is required");
+  assert.notEqual((await call("cancelSessionAction", [id, "clicked the wrong station"], "")).result.ok, true, "signed-out callers cannot");
+  const bills = q("SELECT COUNT(*) AS n FROM bills")[0].n;
+  assert.ok((await (await get("/", owner)).text()).includes("Sim 1"));
+  assert.equal((await call("cancelSessionAction", [id, "clicked the wrong station"], owner)).result.ok, true);
+  assert.equal(q("SELECT COUNT(*) AS n FROM bills")[0].n, bills, "no bill was made");
+  assert.deepEqual(q("SELECT billed, cancelled, cancel_reason AS r FROM sessions WHERE id = ?", id).map((r) => ({ ...r })), [{ billed: 1, cancelled: 1, r: "clicked the wrong station" }]);
+  assert.equal((await call("startSessionAction", [{ stationId: sim, players: 1, customerId: null, minutes: 15 }], owner)).result.ok, true, "the station is free again");
+  assert.match((await call("cancelSessionAction", [id, "again"], owner)).result.error, /already cancelled/);
+  const page = await (await get("/reports?range=today", owner)).text();
+  assert.ok(page.includes("Cancelled sessions") && page.includes("clicked the wrong station"), "Reports lists it");
+  assert.ok(q("SELECT action FROM audit_log").some((r) => r.action === "session.cancel"), "and the log has it");
+  const open = q("SELECT id FROM sessions WHERE station_id = ? AND billed = 0", sim)[0].id;
+  assert.equal((await call("cancelSessionAction", [open, "cleaning up"], owner)).result.ok, true);
+});
+
+await step("extra controller, custom added time, and changing the amount taken: staff may lower with a reason, only the owner may raise, the owner is told", async () => {
+  const sim = station("Sim 1");
+  const quote = (await call("rateQuoteAction", [sim], staff)).result;
+  assert.ok(quote.ok && quote.data.hourlyPaise > 0, "the Start dialog can ask what the station costs");
+  const id = (await call("startSessionAction", [{ stationId: sim, players: 1, customerId: null, minutes: 30 }], staff)).result.data;
+  assert.equal((await call("addControllerAction", [id], staff)).result.ok, true);
+  assert.equal(q("SELECT added_controllers AS n FROM sessions WHERE id = ?", id)[0].n, 1);
+  assert.equal((await call("extendAction", [id, 20], staff)).result.ok, true, "any number of minutes can be added");
+  assert.equal(q("SELECT planned_minutes AS m FROM sessions WHERE id = ?", id)[0].m, 50);
+  assert.equal((await call("extendAction", [id, 0], staff)).result.ok, false);
+  assert.equal((await call("stopAction", [id], staff)).result.ok, true);
+
+  const lines = (await call("getDraftAction", [id], staff)).result.data.lines;
+  const total = lines.reduce((s, l) => s + l.qty * l.unitPaise, 0);
+  const pay = (cookie, taken, why, amount = taken) =>
+    call("finalizeBillAction", [{ sessionId: id, discountType: "none", discountValue: "", reason: "", payments: [{ method: "cash", rupees: (amount / 100).toFixed(2) }], finalAmount: (taken / 100).toFixed(2), adjustReason: why }], cookie);
+  assert.match((await pay(staff, total + 1000, "customer insisted")).result.error, /Only the owner can raise/);
+  assert.match((await pay(staff, total - 1000, "")).result.error, /reason for changing the amount/);
+  assert.match((await pay(staff, total - 1000, "agreed", total)).result.error, /add up/, "payments must match what was taken");
+  assert.equal(q("SELECT COUNT(*) AS n FROM bills WHERE session_id = ?", id)[0].n, 0, "refusals write nothing");
+
+  assert.equal((await pay(staff, total - 1000, "customer had agreed on a round figure")).result.ok, true);
+  const bill = q("SELECT id, total_paise AS t, adjusted_paise AS a, adjusted_reason AS r FROM bills WHERE session_id = ?", id)[0];
+  assert.deepEqual([bill.t, bill.a, bill.r], [total - 1000, -1000, "customer had agreed on a round figure"]);
+
+  assert.ok((await (await get("/", owner)).text()).includes("customer had agreed on a round figure"), "the owner's bell lists it");
+  assert.ok(!(await (await get("/", staff)).text()).includes("customer had agreed on a round figure"), "staff are not shown the owner's notices");
+  const reports = await (await get("/reports?range=today", owner)).text();
+  assert.ok(reports.includes("Amount changed at payment") && reports.includes("Close the day"), "Reports lists it and has the closing sheet");
+  assert.match((await call("markAdjustmentsSeenAction", [], staff)).result.error, /Only the owner/);
+  assert.equal((await call("markAdjustmentsSeenAction", [], owner)).result.ok, true);
+  assert.ok(!(await (await get("/", owner)).text()).includes("customer had agreed on a round figure"), "and it leaves the bell once seen");
+  assert.ok(q("SELECT action FROM audit_log").some((r) => r.action === "bill.adjust"));
+});
+
 await step("owner resets a PIN: old PIN stops working, new one works", async () => {
   const id = q("SELECT id FROM user WHERE username = 'counter'")[0].id;
   await form("resetPinAction", { id, pin: "5566" }, owner);
@@ -688,7 +748,7 @@ await step("owner resets a PIN: old PIN stops working, new one works", async () 
 
 await step("owner actions are written to the audit log, and the launcher keeps a server log", async () => {
   const actions = new Set(q("SELECT action FROM audit_log").map((r) => r.action));
-  for (const a of ["settings.cafe", "rate.save", "station.create", "staff.create", "staff.pin_reset", "session.stop"]) {
+  for (const a of ["settings.cafe", "rate.save", "station.create", "staff.create", "staff.pin_reset", "session.stop", "login.fail"]) {
     assert.ok(actions.has(a), `audit log is missing ${a}`);
   }
   assert.ok(fs.existsSync(path.join(DATA, "server.log")), "data/server.log should exist (start.bat writes it)");
@@ -736,6 +796,7 @@ await step("stop app: staff are refused, the owner stops the whole app", async (
   }
   assert.ok(gone, "the server went away");
   assert.ok(q("SELECT action FROM audit_log").some((r) => r.action === "app.quit"), "and it was logged");
+  assert.equal(q("SELECT COUNT(*) AS n FROM session")[0].n, 0, "and everybody was signed out, so the next start opens on the sign-in page");
 });
 
 console.log(`\n${passed} smoke steps passed`);

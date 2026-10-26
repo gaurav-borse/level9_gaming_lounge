@@ -1,25 +1,21 @@
 import { all, get, run, tx, audit } from "./index.ts";
 import { UserError } from "../errors.ts";
 import { pickRate } from "../engine/rates.ts";
-import { prepaidMinutes } from "../engine/pricing.ts";
+import { billableMs, excessMs, timeIsUp } from "../engine/pricing.ts";
 import type { RateSnapshot } from "../engine/pricing.ts";
-import type { PaymentMethod } from "../engine/bill.ts";
 import { listRates } from "./catalog.ts";
 import { getMenuItem } from "./menu.ts";
-
-export type SessionMode = "open" | "fixed" | "prepaid";
 
 export type SessionRow = {
   id: number;
   stationId: number;
   customerId: number | null;
   staffId: string;
-  mode: SessionMode;
   startedAt: number;
-  plannedMinutes: number | null;
-  advancePaise: number;
-  advanceMethod: PaymentMethod | null;
-  players: number;
+  plannedMinutes: number | null; // null only for sessions from before every session had a set time
+  players: number; // controllers paid for when the session started
+  addedControllers: number; // controllers added later
+  addedControllersPaise: number; // what those cost for the rest of the planned time (added to the session charge)
   pausedAt: number | null;
   pausedTotalMs: number;
   endedAt: number | null;
@@ -28,9 +24,8 @@ export type SessionRow = {
   rate: RateSnapshot;
 };
 
-const COLS = `s.id, s.station_id AS stationId, s.customer_id AS customerId, s.staff_id AS staffId, s.mode,
-  s.started_at AS startedAt, s.planned_minutes AS plannedMinutes, s.advance_paise AS advancePaise,
-  s.advance_method AS advanceMethod, s.players, s.paused_at AS pausedAt, s.paused_total_ms AS pausedTotalMs,
+const COLS = `s.id, s.station_id AS stationId, s.customer_id AS customerId, s.staff_id AS staffId,
+  s.started_at AS startedAt, s.planned_minutes AS plannedMinutes, s.players, s.added_controllers AS addedControllers, s.added_controllers_paise AS addedControllersPaise, s.paused_at AS pausedAt, s.paused_total_ms AS pausedTotalMs,
   s.ended_at AS endedAt, s.notes, s.billed, s.rate_json AS rateJson`;
 
 type Raw = Omit<SessionRow, "rate" | "billed"> & { billed: number; rateJson: string };
@@ -53,10 +48,7 @@ function live(id: number): SessionRow {
 export type StartInput = {
   stationId: number;
   staffId: string;
-  mode: SessionMode;
-  plannedMinutes?: number;
-  advancePaise?: number;
-  advanceMethod?: PaymentMethod;
+  plannedMinutes: number;
   players: number;
   customerId?: number | null;
   now: number;
@@ -83,23 +75,8 @@ export function startSession(i: StartInput): number {
     const rate = pickRate(listRates(), st.zoneId, new Date(i.now));
     if (!rate) throw new UserError(`No rate is set for ${st.zoneName} right now. Add one in Settings.`);
 
-    const mode = i.mode;
-    let planned: number | null = null;
-    let advance = 0;
-    let advanceMethod: PaymentMethod | null = null;
-
-    if (mode === "fixed") {
-      const m = i.plannedMinutes;
-      if (m === undefined || !Number.isInteger(m) || m < 1 || m > 1440) throw new UserError("Choose a duration between 1 and 1440 minutes");
-      planned = m;
-    } else if (mode === "prepaid") {
-      advance = i.advancePaise ?? 0;
-      if (!Number.isInteger(advance) || advance <= 0) throw new UserError("Enter the prepaid amount");
-      if (!i.advanceMethod) throw new UserError("Choose how the prepaid amount was paid");
-      advanceMethod = i.advanceMethod;
-      planned = prepaidMinutes(advance, rate.hourlyPaise + rate.extraControllerPaise * (i.players - 1)); // what they actually pay per hour
-      if (planned < 1) throw new UserError("That amount is too small for this rate");
-    }
+    const m = i.plannedMinutes;
+    if (!Number.isInteger(m) || m < 1 || m > 1440) throw new UserError("Choose a duration between 1 and 1440 minutes");
 
     const snap: RateSnapshot = {
       rateId: rate.id,
@@ -107,18 +84,15 @@ export function startSession(i: StartInput): number {
       hourlyPaise: rate.hourlyPaise,
       extraControllerPaise: rate.extraControllerPaise,
       incrementMin: rate.incrementMin,
-      minMinutes: rate.minMinutes,
-      graceMin: rate.graceMin,
     };
     const id = Number(
       run(
-        `INSERT INTO sessions (station_id, customer_id, staff_id, mode, started_at, planned_minutes,
-                               advance_paise, advance_method, players, rate_json)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        st.id, i.customerId ?? null, i.staffId, mode, i.now, planned, advance, advanceMethod, i.players, JSON.stringify(snap),
+        `INSERT INTO sessions (station_id, customer_id, staff_id, mode, started_at, planned_minutes, players, rate_json)
+         VALUES (?,?,?,'fixed',?,?,?,?)`,
+        st.id, i.customerId ?? null, i.staffId, i.now, m, i.players, JSON.stringify(snap),
       ).lastInsertRowid,
     );
-    audit(i.staffId, "session.start", `${st.name} ${mode}`, i.now);
+    audit(i.staffId, "session.start", `${st.name} ${m} min`, i.now);
     return id;
   });
 }
@@ -126,6 +100,7 @@ export function startSession(i: StartInput): number {
 export function pauseSession(id: number, now: number): void {
   const s = live(id);
   if (s.pausedAt !== null) return;
+  if (timeIsUp(s, s.plannedMinutes, now)) throw new UserError("Time is up. Add time or stop the session.");
   run("UPDATE sessions SET paused_at = ? WHERE id = ?", Math.max(now, s.startedAt), id);
 }
 
@@ -136,11 +111,33 @@ export function resumeSession(id: number, now: number): void {
 }
 
 export function extendSession(id: number, minutes: number, staffId: string, now: number): void {
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) throw new UserError("Extend by 1 to 1440 minutes");
-  const s = live(id);
-  if (s.plannedMinutes === null) throw new UserError("Open sessions have no end time to extend");
-  run("UPDATE sessions SET planned_minutes = planned_minutes + ? WHERE id = ?", minutes, id);
-  audit(staffId, "session.extend", `session ${id} +${minutes} min`, now);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) throw new UserError("Add 1 to 1440 minutes");
+  tx(() => {
+    const s = live(id);
+    if (s.plannedMinutes === null) throw new UserError("Open sessions have no end time to extend");
+    // The clock stopped when the time was up, so the wait for someone to decide is not played time: the new minutes start from that moment.
+    const waited = excessMs(s, s.plannedMinutes, now);
+    // Controllers added earlier are charged for the new minutes too.
+    const more = Math.round((s.addedControllers * s.rate.extraControllerPaise * minutes) / 60);
+    run(
+      "UPDATE sessions SET planned_minutes = ?, paused_total_ms = paused_total_ms + ?, added_controllers_paise = added_controllers_paise + ? WHERE id = ?",
+      s.plannedMinutes + minutes, waited, more, id,
+    );
+    audit(staffId, "session.extend", `session ${id} +${minutes} min`, now);
+  });
+}
+
+/** One more controller on a running session. It is charged for the rest of the planned time only (and for any time added later). */
+export function addController(id: number, staffId: string, now: number): void {
+  tx(() => {
+    const s = live(id);
+    if (s.players + s.addedControllers >= 20) throw new UserError("Players must be between 1 and 20");
+    const playedMin = Math.ceil(billableMs(s, now) / 60000);
+    const left = s.plannedMinutes === null ? 0 : Math.max(0, s.plannedMinutes - playedMin);
+    const cost = Math.round((s.rate.extraControllerPaise * left) / 60);
+    run("UPDATE sessions SET added_controllers = added_controllers + 1, added_controllers_paise = added_controllers_paise + ? WHERE id = ?", cost, id);
+    audit(staffId, "session.controller", `session ${id} +1 controller, ${cost} paise`, now);
+  });
 }
 
 export function transferSession(id: number, toStationId: number, staffId: string, now: number): void {
@@ -167,9 +164,30 @@ export function stopSession(id: number, now: number, staffId: string): void {
     const s = getSession(id);
     if (s.billed) throw new UserError("This session is already billed");
     if (s.endedAt !== null) return; // double-click safe
-    const pausedTotal = s.pausedTotalMs + (s.pausedAt !== null ? Math.max(0, now - s.pausedAt) : 0);
+    // Time played after the planned time was up is not billed: it is booked as a pause, so the bill is exactly the plan.
+    const pausedTotal = s.pausedTotalMs + (s.pausedAt !== null ? Math.max(0, now - s.pausedAt) : 0) + excessMs(s, s.plannedMinutes, now);
     run("UPDATE sessions SET ended_at = ?, paused_at = NULL, paused_total_ms = ? WHERE id = ?", Math.max(now, s.startedAt), pausedTotal, id);
     audit(staffId, "session.stop", `session ${id}`, now);
+  });
+}
+
+/**
+ * Owner only: close a session that was started by mistake. Nothing is billed and no stock moves; the station is free at once.
+ * The session stays in the database (cancelled, with the reason) and is listed on the Reports page, but counts nowhere.
+ */
+export function cancelSession(id: number, reason: string, userId: string, role: "owner" | "staff", now: number): void {
+  if (role !== "owner") throw new UserError("Only the owner can cancel a session");
+  if (!reason.trim()) throw new UserError("Give a reason for cancelling this session");
+  tx(() => {
+    const s = getSession(id);
+    if (s.billed) throw new UserError(get("SELECT 1 AS x FROM sessions WHERE id = ? AND cancelled = 1", id) ? "This session is already cancelled" : "This session is already billed. Mark its bill invalid instead.");
+    const name = get<{ name: string }>("SELECT name FROM stations WHERE id = ?", s.stationId)?.name ?? "Station";
+    run(
+      `UPDATE sessions SET billed = 1, cancelled = 1, cancel_reason = ?, cancelled_by = ?, cancelled_at = ?,
+         ended_at = COALESCE(ended_at, ?), paused_at = NULL WHERE id = ?`,
+      reason.trim(), userId, now, Math.max(now, s.startedAt), id,
+    );
+    audit(userId, "session.cancel", `${name}: ${reason.trim()}`, now);
   });
 }
 
@@ -197,22 +215,32 @@ export type SessionItem = { id: number; name: string; qty: number; unitPaise: nu
 export const listItems = (sessionId: number): SessionItem[] =>
   all<SessionItem>("SELECT id, name, qty, unit_paise AS unitPaise, item_id AS itemId FROM session_items WHERE session_id = ? ORDER BY id", sessionId);
 
-export function addItem(sessionId: number, name: string, qty: number, unitPaise: number, now: number): void {
+export function addItem(sessionId: number, name: string, qty: number, unitPaise: number, now: number, staffId?: string): void {
   const s = getSession(sessionId);
   if (s.billed) throw new UserError("This session is already billed");
   if (!Number.isInteger(qty) || qty < 1 || qty > 99) throw new UserError("Quantity must be between 1 and 99");
   if (!Number.isInteger(unitPaise) || unitPaise < 0) throw new UserError("Price is not valid");
   run("INSERT INTO session_items (session_id, name, qty, unit_paise, created_at) VALUES (?,?,?,?,?)", sessionId, name, qty, unitPaise, now);
+  if (staffId) audit(staffId, "item.add", `session ${sessionId}: ${qty} x ${name} @ ${unitPaise} paise (not on the menu)`, now);
 }
 
-/** Put a menu item on the tab at today's price. Stock only leaves when the bill is paid. */
-export function addMenuItem(sessionId: number, menuItemId: number, qty: number, now: number): void {
+/**
+ * Put a menu item on the tab at today's price. Stock only leaves when the bill is paid.
+ * Returns a warning when the shop count says there is not enough (counting what other open tabs already hold); the item is still added,
+ * because counts are typed in by hand and drift, so staff know best.
+ */
+export function addMenuItem(sessionId: number, menuItemId: number, qty: number, now: number): string | null {
   const s = getSession(sessionId);
   if (s.billed) throw new UserError("This session is already billed");
   if (!Number.isInteger(qty) || qty < 1 || qty > 99) throw new UserError("Quantity must be between 1 and 99");
   const m = getMenuItem(menuItemId);
   if (!m || !m.active) throw new UserError("That item is not on the menu any more");
   run("INSERT INTO session_items (session_id, name, qty, unit_paise, created_at, item_id) VALUES (?,?,?,?,?,?)", sessionId, m.name, qty, m.pricePaise, now, m.id);
+  if (!m.trackStock || m.onHand === null) return null;
+  const onTabs = get<{ n: number }>("SELECT COALESCE(SUM(i.qty), 0) AS n FROM session_items i JOIN sessions s ON s.id = i.session_id WHERE i.item_id = ? AND s.billed = 0", m.id)?.n ?? 0;
+  const left = m.onHand - onTabs;
+  if (left >= 0) return null;
+  return m.onHand <= 0 ? `${m.name} is out of stock. Added anyway.` : `Only ${m.onHand} ${m.name} in stock, ${onTabs} are now on open tabs. Added anyway.`;
 }
 
 export function removeItem(itemId: number, staffId: string, now: number): void {

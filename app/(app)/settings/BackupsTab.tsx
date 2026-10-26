@@ -4,7 +4,7 @@ import { authSecret } from "@/lib/auth";
 import { makeChallenge } from "@/lib/danger";
 import { ActionForm } from "@/components/action-form";
 import { DeleteButton } from "@/components/menu/DeleteButton";
-import { backupsDir, KEEP, listBackups } from "@/lib/backup";
+import { backupsDir, KEEP, listBackups, secondCopyProblem } from "@/lib/backup";
 import type { BackupFile } from "@/lib/backup";
 import { getSetting } from "@/lib/db/settings";
 import { dateTime } from "@/lib/format";
@@ -40,6 +40,8 @@ export function BackupsTab() {
   const main = listBackups(backupsDir());
   const other = second ? listBackups(second) : [];
   const last = main.find((b) => b.kind === "auto");
+  const lastCopy = other.find((b) => b.kind === "auto");
+  const problem = secondCopyProblem(backupsDir(), second);
   const challenge = makeChallenge(authSecret());
   return (
     <div className="space-y-6">
@@ -58,7 +60,7 @@ export function BackupsTab() {
       <ActionForm action={saveBackupFolderAction} success="Saved" className={`${cardCls} flex flex-col gap-3 p-6`}>
         <h2 className="font-display text-xl font-semibold">Second folder</h2>
         <p className="max-w-prose text-sm text-mute">
-          A copy on the same computer is lost if the computer is. Type the folder of a USB drive or a cloud-synced folder (like OneDrive) and every backup is copied there too.
+          A copy on the same computer is lost if the computer is. Type the folder of a USB drive or a cloud-synced folder (like OneDrive) and every backup is copied there too. A backup holds everything, including the sign-in PINs (scrambled, but a short PIN can be cracked), so keep that drive or folder private.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-72 flex-1">
@@ -67,6 +69,10 @@ export function BackupsTab() {
           </div>
           <button className={btnCls}>Save folder</button>
         </div>
+        {second && (
+          problem ? <p role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">{problem}</p>
+            : <p className="text-sm text-mute">{lastCopy ? <>Last copied there: <b>{dateTime(lastCopy.at)}</b></> : "Nothing to copy yet."}</p>
+        )}
       </ActionForm>
 
       <section className={`${cardCls} overflow-x-auto`}>

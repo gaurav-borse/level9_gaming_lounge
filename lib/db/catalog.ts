@@ -83,21 +83,21 @@ export type RateInput = Omit<RateRow, "id"> & { id?: number };
 export const listRates = (): RateRow[] =>
   all<RateRow>(
     `SELECT id, zone_id AS zoneId, name, hourly_paise AS hourlyPaise, extra_controller_paise AS extraControllerPaise,
-            increment_min AS incrementMin, min_minutes AS minMinutes, grace_min AS graceMin, days_mask AS daysMask,
+            increment_min AS incrementMin, days_mask AS daysMask,
             from_min AS fromMin, to_min AS toMin, priority
      FROM rates WHERE active = 1 ORDER BY zone_id, priority DESC, id`,
   );
 
 export function saveRate(r: RateInput): number {
   if (!get("SELECT 1 AS x FROM zones WHERE id = ? AND active = 1", r.zoneId)) throw new UserError("Zone not found");
-  const v = [r.zoneId, r.name, r.hourlyPaise, r.extraControllerPaise, r.incrementMin, r.minMinutes, r.graceMin, r.daysMask, r.fromMin, r.toMin, r.priority] as const;
+  const v = [r.zoneId, r.name, r.hourlyPaise, r.extraControllerPaise, r.incrementMin, r.daysMask, r.fromMin, r.toMin, r.priority] as const;
   if (r.id === undefined) {
     return Number(run(
-      `INSERT INTO rates (zone_id, name, hourly_paise, extra_controller_paise, increment_min, min_minutes, grace_min, days_mask, from_min, to_min, priority)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`, ...v).lastInsertRowid);
+      `INSERT INTO rates (zone_id, name, hourly_paise, extra_controller_paise, increment_min, days_mask, from_min, to_min, priority)
+       VALUES (?,?,?,?,?,?,?,?,?)`, ...v).lastInsertRowid);
   }
   run(
-    `UPDATE rates SET zone_id=?, name=?, hourly_paise=?, extra_controller_paise=?, increment_min=?, min_minutes=?, grace_min=?, days_mask=?, from_min=?, to_min=?, priority=?
+    `UPDATE rates SET zone_id=?, name=?, hourly_paise=?, extra_controller_paise=?, increment_min=?, days_mask=?, from_min=?, to_min=?, priority=?
      WHERE id=? AND active = 1`, ...v, r.id);
   return r.id;
 }

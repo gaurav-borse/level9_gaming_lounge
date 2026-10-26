@@ -8,7 +8,7 @@ export const STATUS: Record<StatusKey, { label: string; icon: LucideIcon; chip: 
   free: { label: "Free", icon: CircleCheck, chip: "bg-free/15 text-free", glow: "var(--color-free)" },
   running: { label: "Running", icon: Play, chip: "bg-brand/20 text-brand-text", glow: "var(--color-brand)" },
   ending: { label: "Ending soon", icon: Timer, chip: "bg-warn/15 text-warn", glow: "var(--color-warn)" },
-  overtime: { label: "Overtime", icon: AlarmClock, chip: "bg-over/15 text-over", glow: "var(--color-over)" },
+  timeup: { label: "Time's up", icon: AlarmClock, chip: "bg-over/15 text-over", glow: "var(--color-over)" },
   paused: { label: "Paused", icon: Pause, chip: "bg-paused/20 text-paused", glow: "var(--color-paused)" },
   awaiting: { label: "Awaiting payment", icon: Wallet, chip: "bg-silver/15 text-silver", glow: "var(--color-silver)" },
   maintenance: { label: "Maintenance", icon: Wrench, chip: "bg-ink/10 text-mute", glow: "var(--color-mute)" },

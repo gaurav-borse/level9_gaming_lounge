@@ -4,12 +4,21 @@ import { Search, UserPlus, X } from "lucide-react";
 import { Modal } from "@/components/modal";
 import { useCall } from "@/lib/useCall";
 import { useToast } from "@/components/toast";
-import { createCustomerAction, searchCustomersAction, startSessionAction } from "@/app/(app)/actions";
+import { createCustomerAction, rateQuoteAction, searchCustomersAction, startSessionAction } from "@/app/(app)/actions";
 import { btnCls, btnPrimaryCls, inputCls, labelCls } from "@/lib/ui";
 import type { Customer } from "@/lib/db/customers";
+import { rupees } from "@/lib/format";
 
-type Mode = "open" | "fixed";
 type Pick = { id: number; name: string };
+
+/** What the controllers cost, in words: the price per hour and per extra controller, and the total for the minutes chosen. */
+function controllerNote(q: { hourlyPaise: number; extraControllerPaise: number }, players: number, minutes: number): string {
+  const extra = Number.isInteger(players) && players > 1 ? players - 1 : 0;
+  if (q.extraControllerPaise === 0) return extra > 0 ? "No extra-controller price is set for this zone, so extra controllers are free. The owner can set one in Settings, Rates." : `${rupees(q.hourlyPaise)}/hr. No extra-controller price is set, so extra controllers are free.`;
+  const base = `${rupees(q.hourlyPaise)}/hr, plus ${rupees(q.extraControllerPaise)}/hr for each extra controller.`;
+  if (extra === 0 || !Number.isInteger(minutes) || minutes < 1) return base;
+  return `${base} ${extra} extra: ${rupees(Math.round((q.hourlyPaise + q.extraControllerPaise * extra) * minutes / 60))} for ${minutes} minutes.`;
+}
 
 export function StartDialog({ stationName, stationId, onClose }: {
   stationName: string;
@@ -18,7 +27,6 @@ export function StartDialog({ stationName, stationId, onClose }: {
 }) {
   const { call, pending } = useCall();
   const toast = useToast();
-  const [mode, setMode] = useState<Mode>("open");
   const [minutes, setMinutes] = useState("60");
   const [players, setPlayers] = useState("1");
   const [customer, setCustomer] = useState<Pick | null>(null);
@@ -27,6 +35,11 @@ export function StartDialog({ stationName, stationId, onClose }: {
   const [adding, setAdding] = useState(false);
   const [nName, setNName] = useState("");
   const [nPhone, setNPhone] = useState("");
+  const [quote, setQuote] = useState<{ hourlyPaise: number; extraControllerPaise: number } | null>(null);
+
+  useEffect(() => {
+    rateQuoteAction(stationId).then((r) => r.ok && setQuote(r.data));
+  }, [stationId]);
 
   useEffect(() => {
     if (q.trim().length < 2) return;
@@ -38,7 +51,6 @@ export function StartDialog({ stationName, stationId, onClose }: {
   }, [q]);
 
   const shownFound = q.trim().length < 2 ? [] : found;
-  const modes: [Mode, string][] = [["open", "Open (stopwatch)"], ["fixed", "Fixed time"]];
 
   async function addCustomer() {
     const r = await createCustomerAction(nName, nPhone);
@@ -55,39 +67,28 @@ export function StartDialog({ stationName, stationId, onClose }: {
         onSubmit={(e) => {
           e.preventDefault();
           call(
-            () => startSessionAction({ stationId, mode, players, customerId: customer?.id ?? null, minutes }),
+            () => startSessionAction({ stationId, players, customerId: customer?.id ?? null, minutes }),
             { ok: `${stationName} started`, onOk: onClose },
           );
         }}
       >
         <div>
-          <span className={labelCls}>How should the time be counted?</span>
-          <div className="grid grid-cols-2 gap-2">
-            {modes.map(([m, label]) => (
-              <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} className={`${btnCls} ${mode === m ? "!border-brand !bg-brand/10" : ""}`}>
-                {label}
+          <label className={labelCls} htmlFor="mins">How many minutes?</label>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[30, 60, 90, 120, 180].map((m) => (
+              <button key={m} type="button" onClick={() => setMinutes(String(m))} className={`${btnCls} !px-3 !py-1.5 ${minutes === String(m) ? "border-brand" : ""}`}>
+                {m}
               </button>
             ))}
           </div>
+          <input id="mins" className={inputCls} inputMode="numeric" placeholder="Minutes, e.g. 60" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+          <p className="mt-1.5 text-xs text-mute">The price for these minutes is charged from the start. When they are up the clock stops until you add time or stop the session, so the bill never grows on its own.</p>
         </div>
-
-        {mode === "fixed" && (
-          <div>
-            <label className={labelCls} htmlFor="mins">Minutes</label>
-            <div className="mb-2 flex flex-wrap gap-2">
-              {[30, 60, 90, 120, 180].map((m) => (
-                <button key={m} type="button" onClick={() => setMinutes(String(m))} className={`${btnCls} !px-3 !py-1.5 ${minutes === String(m) ? "border-brand" : ""}`}>
-                  {m}
-                </button>
-              ))}
-            </div>
-            <input id="mins" className={inputCls} inputMode="numeric" placeholder="Minutes, e.g. 60" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
-          </div>
-        )}
 
         <div>
           <label className={labelCls} htmlFor="players">Players / controllers</label>
           <input id="players" className={`${inputCls} max-w-28`} inputMode="numeric" placeholder="e.g. 2" value={players} onChange={(e) => setPlayers(e.target.value)} />
+          {quote && <p className="mt-1.5 text-xs text-mute">{controllerNote(quote, Number(players), Number(minutes))}</p>}
         </div>
 
         <div>

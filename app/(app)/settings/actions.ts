@@ -169,8 +169,6 @@ export async function saveRateAction(fd: FormData) {
       hourlyPaise: rupeesToPaise(field(fd, "hourly"), "Hourly rate"),
       extraControllerPaise: extra ? rupeesToPaise(extra, "Extra controller price") : 0,
       incrementMin: int(field(fd, "increment"), "Billing step", { min: 1, max: 240 }),
-      minMinutes: int(field(fd, "min"), "Minimum minutes", { min: 0, max: 600 }),
-      graceMin: int(field(fd, "grace"), "Free minutes", { min: 0, max: 120 }),
       daysMask,
       fromMin,
       toMin,
@@ -255,7 +253,8 @@ export async function saveBackupFolderAction(fd: FormData) {
     const me = await ownerActor();
     const folder = str(field(fd, "folder"), "Folder", { max: 260, required: false });
     if (folder) {
-      if (!path.isAbsolute(folder)) throw new UserError("Type the full folder path, like E:\LoungeBackups");
+      if (folder.startsWith("\\\\") || folder.startsWith("//")) throw new UserError("Network paths are not supported. Use a drive letter, like E:\\LoungeBackups");
+      if (!path.isAbsolute(folder)) throw new UserError("Type the full folder path, like E:\\LoungeBackups");
       if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) throw new UserError("That folder doesn't exist. Create it first, or plug in the drive.");
       const probe = path.join(folder, ".lounge-write-test");
       try {

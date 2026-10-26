@@ -8,7 +8,7 @@ import { startSession, stopSession } from "../lib/db/sessions.ts";
 beforeEach(freshDb);
 
 function visit(customerId: number, kind: string, minutes: number, at: number) {
-  const s = startSession({ stationId: station(kind), staffId: "u1", mode: "open", players: 1, customerId, now: at });
+  const s = startSession({ stationId: station(kind), staffId: "u1", plannedMinutes: 1, players: 1, customerId, now: at });
   stopSession(s, at + minutes * MIN, "u1");
   const total = buildDraft(s, at + minutes * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
   return finalizeBill({ sessionId: s, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: total }], now: at + minutes * MIN + MIN });

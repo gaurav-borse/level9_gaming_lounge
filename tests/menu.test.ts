@@ -132,7 +132,7 @@ test("deleting an item or a category removes it from the menu and stock, while b
 test("an item deleted while it is on a tab still bills correctly and still leaves stock", () => {
   const coke = item(cat());
   recordStock(coke, "restock", 5, "u1", "");
-  const s = startSession({ stationId: station("pc"), staffId: "u1", mode: "open", players: 1, now: T0 });
+  const s = startSession({ stationId: station("pc"), staffId: "u1", plannedMinutes: 1, players: 1, now: T0 });
   addMenuItem(s, coke, 2, T0);
   deleteItem(coke, "u1");
   assert.throws(() => addMenuItem(s, coke, 1, T0), /not on the menu/);
@@ -180,7 +180,7 @@ test("menu items on a tab: the price is frozen, and stock leaves once, when the 
   const chips = item(c, { name: "Chips", pricePaise: 3000 });
   recordStock(coke, "restock", 10, "u1", "");
   recordStock(chips, "restock", 4, "u1", "");
-  const s = startSession({ stationId: station("ps5"), staffId: "u1", mode: "open", players: 1, now: T0 });
+  const s = startSession({ stationId: station("ps5"), staffId: "u1", plannedMinutes: 1, players: 1, now: T0 });
   addMenuItem(s, coke, 2, T0);
   addMenuItem(s, chips, 1, T0);
   saveItem(coke, { categoryId: c, name: "Coke", pricePaise: 9900 }, "u1");
@@ -197,7 +197,7 @@ test("menu items on a tab: the price is frozen, and stock leaves once, when the 
 
 test("addMenuItem refuses deleted items and bad quantities", () => {
   const id = item(cat());
-  const s = startSession({ stationId: station("pc"), staffId: "u1", mode: "open", players: 1, now: T0 });
+  const s = startSession({ stationId: station("pc"), staffId: "u1", plannedMinutes: 1, players: 1, now: T0 });
   assert.throws(() => addMenuItem(s, id, 0, T0), /between 1 and 99/);
   assert.throws(() => addMenuItem(s, id, 100, T0), /between 1 and 99/);
   deleteItem(id, "u1");
@@ -259,7 +259,7 @@ test("voiding a bill puts back exactly what it took out, once", () => {
   assert.equal(onHand(coke), 6);
   voidBill(sold.billId, "wrong item", "u1", "owner", T0 + MIN);
   assert.equal(onHand(coke), 10);
-  assert.throws(() => voidBill(sold.billId, "again", "u1", "owner", T0 + 2 * MIN), /already void/);
+  assert.throws(() => voidBill(sold.billId, "again", "u1", "owner", T0 + 2 * MIN), /already marked invalid/);
   assert.equal(onHand(coke), 10);
   assert.deepEqual(stockHistory(coke).map((m) => m.reason), ["void", "sale", "restock"]);
 });
@@ -267,7 +267,7 @@ test("voiding a bill puts back exactly what it took out, once", () => {
 test("a bill with no menu items (free-text extras only) never touches stock", () => {
   const coke = item(cat());
   recordStock(coke, "restock", 3, "u1", "");
-  const s = startSession({ stationId: station("pool"), staffId: "u1", mode: "open", players: 1, now: T0 });
+  const s = startSession({ stationId: station("pool"), staffId: "u1", plannedMinutes: 1, players: 1, now: T0 });
   run("INSERT INTO session_items (session_id, name, qty, unit_paise, created_at) VALUES (?,?,?,?,?)", s, "Coke", 1, 4000, T0);
   stopSession(s, T0 + 20 * MIN, "u1");
   const total = buildDraft(s, T0 + 20 * MIN).lines.reduce((a, l) => a + l.qty * l.unitPaise, 0);
@@ -283,4 +283,17 @@ test("menuIconFor: picks a picture from the item name, case-insensitively, and f
     ["Dairy Milk", "milk"], ["Boiled egg", "egg"], ["Thali", "meal"], ["Something odd", "other"], ["", "other"],
   ];
   for (const [name, icon] of cases) assert.equal(menuIconFor(name), icon, name);
+});
+
+test("putting more on a tab than the shop count holds gives a warning but still adds it; stock on other open tabs counts", () => {
+  const cat = saveCategory(null, "Drinks", "u1");
+  const coke = saveItem(null, { categoryId: cat, name: "Coke", pricePaise: 4000 }, "u1");
+  recordStock(coke, "restock", 3, "u1", "delivery");
+  const a = startSession({ stationId: station("ps5"), staffId: "u1", plannedMinutes: 60, players: 1, now: T0 });
+  const b = startSession({ stationId: station("pc"), staffId: "u1", plannedMinutes: 60, players: 1, now: T0 });
+  assert.equal(addMenuItem(a, coke, 2, T0), null, "2 of 3: fine");
+  assert.match(addMenuItem(b, coke, 2, T0)!, /Only 3 Coke in stock, 4 are now on open tabs/);
+  assert.equal(listItems(b).length, 1, "it is still added: staff know best");
+  recordStock(coke, "adjust", 0, "u1", "none left");
+  assert.match(addMenuItem(b, coke, 1, T0)!, /out of stock/);
 });

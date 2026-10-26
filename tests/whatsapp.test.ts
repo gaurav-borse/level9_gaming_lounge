@@ -1,5 +1,6 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { getDb } from "../lib/db/index.ts";
 import { freshDb, station, MIN, T0 } from "./helpers.ts";
 import { createCustomer } from "../lib/db/customers.ts";
 import { setSettings } from "../lib/db/settings.ts";
@@ -11,7 +12,7 @@ import { compose, fill, waLink } from "../lib/whatsapp/compose.ts";
 beforeEach(freshDb);
 
 const begin = (customerId: number | null, kind = "ps5", extra: Partial<Parameters<typeof startSession>[0]> = {}) =>
-  startSession({ stationId: station(kind), staffId: "u1", mode: "open", players: 1, customerId, now: T0, ...extra });
+  startSession({ stationId: station(kind), staffId: "u1", plannedMinutes: 600, players: 1, customerId, now: T0, ...extra });
 const types = (now = T0) => pendingMessages(now).map((m) => m.key.split(":")[0]).sort();
 
 test("fill, compose and waLink", () => {
@@ -22,6 +23,7 @@ test("fill, compose and waLink", () => {
 });
 
 test("only customers with a phone get messages; switches turn them off", () => {
+  setSettings({ "wa.ending": "0" });
   begin(createCustomer("No Phone", ""), "pc");
   begin(null, "pool");
   assert.deepEqual(types(), []);
@@ -30,7 +32,7 @@ test("only customers with a phone get messages; switches turn them off", () => {
   assert.deepEqual(types(), ["started", "welcome"].sort());
   const started = pendingMessages(T0).find((m) => m.type === "started")!;
   assert.equal(started.to, "Asha Rao");
-  assert.match(decodeURIComponent(started.href), /^https:\/\/wa\.me\/919876543211\?text=Hi Asha Rao, you're on .+ \(.+\) at .+\. Started 3:00 pm · Open play · ₹\d+\/hr · no fixed end time\.$/);
+  assert.match(decodeURIComponent(started.href), /^https:\/\/wa\.me\/919876543211\?text=Hi Asha Rao, you're on .+ \(.+\) at .+\. Started 3:00 pm · Fixed 600 min · ₹\d+\/hr · ends about .+\.$/);
 
   setSettings({ "wa.welcome": "0" });
   assert.deepEqual(types(), ["started"]);
@@ -41,6 +43,7 @@ test("only customers with a phone get messages; switches turn them off", () => {
 });
 
 test("welcome once per customer per day; opened and skipped messages never come back", () => {
+  setSettings({ "wa.ending": "0" });
   const c = createCustomer("Asha Rao", "98765 43211");
   begin(c, "ps5");
   begin(c, "pc");
@@ -55,13 +58,10 @@ test("welcome once per customer per day; opened and skipped messages never come 
   assert.throws(() => markMessage("rm -rf", "opened"), /not valid/);
 });
 
-test("ending reminder: fixed time only, due at the lead time, none while paused or after stopping", () => {
+test("ending reminder: due at the lead time, none while paused or after stopping", () => {
   const c = createCustomer("Asha Rao", "98765 43211");
   setSettings({ "alert.leadMin": "10", "wa.welcome": "0", "wa.started": "0" });
-  begin(c, "ps5"); // open play: no end time
-  assert.deepEqual(types(), []);
-
-  const fixed = begin(c, "pc", { mode: "fixed", plannedMinutes: 60 });
+  const fixed = begin(c, "pc", { plannedMinutes: 60 });
   const m = pendingMessages(T0 + 5 * MIN)[0];
   assert.equal(m.key, `ending:${fixed}`);
   assert.equal(m.dueAt, T0 + 50 * MIN, "60 minutes minus the 10 minute lead");
@@ -69,6 +69,17 @@ test("ending reminder: fixed time only, due at the lead time, none while paused 
 
   pauseSession(fixed, T0 + 5 * MIN);
   assert.deepEqual(types(T0 + 5 * MIN), []);
+});
+
+test("no ending reminder once the time has already run out; a session without a set time is not called Fixed null min", () => {
+  const c = createCustomer("Asha Rao", "98765 43211");
+  setSettings({ "alert.leadMin": "10", "wa.welcome": "0", "wa.ending": "1", "wa.started": "1" });
+  const s = begin(c, "pc", { plannedMinutes: 30 });
+  assert.deepEqual(types(T0 + 5 * MIN), ["ending", "started"]);
+  assert.deepEqual(types(T0 + 45 * MIN), ["started"], "15 minutes over: a reminder that says minutes left would be wrong");
+  getDb().prepare("UPDATE sessions SET planned_minutes = NULL WHERE id = ?").run(s);
+  const started = pendingMessages(T0 + 5 * MIN).find((m) => m.key === `started:${s}`)!;
+  assert.doesNotMatch(decodeURIComponent(started.href), /null/);
 });
 
 test("invoice message after a paid bill; not for void bills or old bills", () => {

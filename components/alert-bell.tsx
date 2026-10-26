@@ -1,14 +1,18 @@
 "use client";
 import { useMemo, useRef } from "react";
 import Link from "next/link";
-import { AlarmClock, Bell, CircleAlert, PackageX, Timer, Wallet, type LucideIcon } from "lucide-react";
+import { AlarmClock, Bell, CircleAlert, PackageX, DatabaseBackup, PencilLine, Timer, Wallet, type LucideIcon } from "lucide-react";
 import type { BoardSession } from "@/lib/db/sessions";
 import { buildAlerts, type AlertKind } from "@/lib/notifications";
+import { markAdjustmentsSeenAction } from "@/app/(app)/actions";
+import { useCall } from "@/lib/useCall";
 import { useNow } from "@/lib/useNow";
 import { useDismissableDetails } from "@/lib/useDismissableDetails";
 
 const LOOK: Record<AlertKind, { icon: LucideIcon; tone: string }> = {
-  overtime: { icon: AlarmClock, tone: "bg-over/15 text-over" },
+  timeup: { icon: AlarmClock, tone: "bg-over/15 text-over" },
+  adjust: { icon: PencilLine, tone: "bg-warn/15 text-warn" },
+  backup: { icon: DatabaseBackup, tone: "bg-warn/15 text-warn" },
   out: { icon: PackageX, tone: "bg-over/15 text-over" },
   ending: { icon: Timer, tone: "bg-warn/15 text-warn" },
   payment: { icon: Wallet, tone: "bg-brand/20 text-brand-text" },
@@ -16,19 +20,22 @@ const LOOK: Record<AlertKind, { icon: LucideIcon; tone: string }> = {
 };
 
 /** The bell in the top corner: a count, and a list of everything that needs attention (sessions, payments, stock). Timed alerts follow the clock. */
-export function AlertBell({ stations, stock, leadMin }: {
+export function AlertBell({ stations, stock, leadMin, adjusted = [], backupProblem }: {
   stations: { id: number; name: string; session: BoardSession }[];
   stock: { id: number; name: string; onHand: number }[];
   leadMin: number;
+  adjusted?: Parameters<typeof buildAlerts>[0]["adjusted"]; // owner only: amount changes not seen yet
+  backupProblem?: string; // owner only: the second-folder backup copy is behind
 }) {
+  const { call, pending } = useCall();
   const now = useNow(); // 0 until the page has loaded in the browser
   const menu = useRef<HTMLDetailsElement>(null);
   useDismissableDetails(menu);
   const alerts = useMemo(
-    () => buildAlerts({ stations: now ? stations : [], stock, leadMin, now }),
-    [stations, stock, leadMin, now],
+    () => buildAlerts({ stations: now ? stations : [], stock, leadMin, now, adjusted, backupProblem }),
+    [stations, stock, leadMin, now, adjusted, backupProblem],
   );
-  const urgent = alerts.some((a) => a.kind === "overtime" || a.kind === "out");
+  const urgent = alerts.some((a) => a.kind === "timeup" || a.kind === "out" || a.kind === "adjust" || a.kind === "backup");
 
   return (
     <details ref={menu} className="relative">
@@ -65,6 +72,11 @@ export function AlertBell({ stations, stock, leadMin }: {
               );
             })}
           </ul>
+        )}
+        {alerts.some((a) => a.kind === "adjust") && (
+          <button type="button" disabled={pending} onClick={() => call(() => markAdjustmentsSeenAction())} className="w-full border-t border-line px-5 py-3 text-left text-sm font-medium text-silver transition hover:bg-raised hover:text-ink">
+            Mark amount changes as seen
+          </button>
         )}
       </div>
     </details>

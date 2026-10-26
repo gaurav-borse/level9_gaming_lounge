@@ -1,26 +1,24 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Play, ShoppingBasket } from "lucide-react";
 import type { BoardStation, BoardZone } from "@/lib/db/sessions";
 import type { MenuItem } from "@/lib/db/menu";
-import type { TodaySummary } from "@/lib/db/bills";
 import { liveInfo } from "@/lib/live";
-import { armAudioUnlock, audioReady, beep } from "@/lib/alerts";
-import { attentionRank, greetingFor, pickFeatured, summarize, zoneUsage } from "@/lib/floor-view";
+import { audioReady } from "@/lib/alerts";
+import { attentionRank, greetingFor, pickFeatured, summarize, zoneAvailability } from "@/lib/floor-view";
 import { useNow } from "@/lib/useNow";
-import { useToast } from "@/components/toast";
 import { Modal } from "@/components/modal";
 import { StationCard } from "./StationCard";
 import { StartDialog } from "./StartDialog";
 import { SessionDrawer } from "./SessionDrawer";
 import { LiveHero } from "./LiveHero";
 import { CounterSale } from "./CounterSale";
-import { TodayCard } from "./TodayCard";
+import { ZoneAvailability } from "./ZoneAvailability";
 import { STATUS, ZONE_ICON, type StatusKey } from "./status";
 
 type Entry = { station: BoardStation; zone: BoardZone };
 
-export function Board({ zones, menu, leadMin, alerts, cafe, role, userName, today }: {
+export function Board({ zones, menu, leadMin, alerts, cafe, role, userName }: {
   zones: BoardZone[];
   menu: MenuItem[];
   leadMin: number;
@@ -28,47 +26,16 @@ export function Board({ zones, menu, leadMin, alerts, cafe, role, userName, toda
   cafe: { name: string; upiId: string };
   role: "owner" | "staff";
   userName: string;
-  today: TodaySummary;
 }) {
   const now = useNow();
-  const toast = useToast();
   const [starting, setStarting] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
   const [counter, setCounter] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
   const [zoneFilter, setZoneFilter] = useState<number | null>(null);
-  const seen = useRef(new Map<number, { status: string; lastBeep: number }>());
 
-  // After a reload or restart the browser keeps alert sound off until the first touch of the page.
-  useEffect(() => armAudioUnlock(window), []);
+  // Sounds and notices come from <SessionAlerts> in the page frame, so they also work on the other pages.
   const soundOff = alerts === "sound" && now > 0 && !audioReady();
-
-  // Sound and toast when a session crosses into "ending soon" or "overtime". Until someone acts, the chime repeats every 2 minutes and the overtime siren every minute.
-  useEffect(() => {
-    if (!now || alerts === "off") return;
-    const ring = (k: "ending" | "overtime") => alerts === "sound" && beep(k);
-    for (const z of zones) {
-      for (const st of z.stations) {
-        const s = st.session;
-        if (!s || s.endedAt !== null) continue;
-        const status = liveInfo(s, leadMin, now).status;
-        const prev = seen.current.get(s.id);
-        if (prev && prev.status !== status && (status === "ending" || status === "overtime")) {
-          ring(status);
-          toast("info", `${st.name}: ${status === "ending" ? `${leadMin} minutes or less left` : "time is up"}`);
-          seen.current.set(s.id, { status, lastBeep: now });
-        } else if (prev && status === "ending" && now - prev.lastBeep >= 120_000) {
-          ring("ending"); // still not dealt with: chime again every 2 minutes
-          seen.current.set(s.id, { status, lastBeep: now });
-        } else if (prev && status === "overtime" && now - prev.lastBeep >= 60_000) {
-          ring("overtime");
-          seen.current.set(s.id, { status, lastBeep: now });
-        } else if (!prev || prev.status !== status) {
-          seen.current.set(s.id, { status, lastBeep: now });
-        }
-      }
-    }
-  }, [now, zones, leadMin, alerts, toast]);
 
   const entries: Entry[] = useMemo(() => zones.flatMap((zone) => zone.stations.map((station) => ({ station, zone }))), [zones]);
   const statusOf = (e: Entry): StatusKey =>
@@ -95,7 +62,18 @@ export function Board({ zones, menu, leadMin, alerts, cafe, role, userName, toda
 
   const openEntry = open === null ? null : entries.find((e) => e.station.id === open) ?? null;
   const startEntry = starting === null ? null : entries.find((e) => e.station.id === starting) ?? null;
-  const usage = zoneUsage(zones.map((z) => ({ name: z.name, stations: z.stations.map((s) => ({ busy: !!s.session, maintenance: s.maintenance })) })));
+  const availability = zoneAvailability(
+    zones.map((z) => ({
+      name: z.name,
+      stations: z.stations.map((s) => ({
+        name: s.name,
+        maintenance: s.maintenance,
+        busy: !!s.session,
+        payment: !!s.session && s.session.endedAt !== null,
+        remainingMs: s.session && now ? liveInfo(s.session, leadMin, now).remainingMs : null,
+      })),
+    })),
+  );
   const freeByZone = zones.map((z) => ({ zone: z, free: z.stations.filter((s) => !s.session && !s.maintenance) })).filter((x) => x.free.length > 0);
 
   if (zones.length === 0) {
@@ -146,7 +124,7 @@ export function Board({ zones, menu, leadMin, alerts, cafe, role, userName, toda
           onOpen={() => featured && setOpen(featured.station.id)}
           onStart={() => setPicking(true)}
         />
-        <TodayCard today={today} usage={usage} />
+        <ZoneAvailability zones={availability} />
       </div>
 
       {soundOff && (

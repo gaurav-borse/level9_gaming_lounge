@@ -58,7 +58,7 @@ export function pendingMessages(now = Date.now()): TrayMessage[] {
           station: st.name,
           zone: z.name,
           start: clock(s.startedAt),
-          mode: s.mode === "open" ? "Open play" : `${s.mode === "prepaid" ? "Prepaid" : "Fixed"} ${s.plannedMinutes} min`,
+          mode: s.plannedMinutes === null ? "Open session" : `Fixed ${s.plannedMinutes} min`,
           rate: `${rupees(r.hourlyPaise)}/hr`,
           end: s.plannedMinutes !== null ? `ends about ${clock(s.startedAt + s.plannedMinutes * 60_000)}` : "no fixed end time",
         });
@@ -66,7 +66,7 @@ export function pendingMessages(now = Date.now()): TrayMessage[] {
       // Paused time doesn't count down, so a paused session has no reminder until it resumes (the page refreshes then).
       if (on("ending") && s.plannedMinutes !== null && s.pausedAt === null) {
         const left = liveInfo(s, leadMin, now).remainingMs ?? 0;
-        add(`ending:${s.id}`, "ending", c, { station: st.name, minutes: String(leadMin) }, Math.round(now + left - leadMin * 60_000));
+        if (left > 0) add(`ending:${s.id}`, "ending", c, { station: st.name, minutes: String(leadMin) }, Math.round(now + left - leadMin * 60_000));
       }
     }
   }

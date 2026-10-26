@@ -8,7 +8,7 @@ import { saveWhatsAppAction } from "./actions";
 const WHEN = {
   welcome: "When a customer starts a session (once per customer per day).",
   started: "When a session starts: station, zone, start time, rate, mode and end time.",
-  ending: "When a fixed-time or prepaid session is about to end (see the warning minutes in Lounge).",
+  ending: "When a session is about to end (see the warning minutes in Lounge).",
   invoice: "After a bill is paid: items and total.",
 };
 

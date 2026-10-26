@@ -5,8 +5,6 @@ export type RateRow = {
   hourlyPaise: number;
   extraControllerPaise: number;
   incrementMin: number;
-  minMinutes: number;
-  graceMin: number;
   daysMask: number; // bit 0 = Sunday ... bit 6 = Saturday
   fromMin: number; // minutes since midnight, inclusive
   toMin: number; // minutes since midnight, exclusive (1440 = end of day)

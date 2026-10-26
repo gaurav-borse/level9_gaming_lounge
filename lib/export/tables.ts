@@ -27,7 +27,7 @@ export function describeFilter(f: BillFilter): string {
   const parts = [
     f.q && `Search "${f.q}"`,
     f.method && `Paid by ${METHOD[f.method]}`,
-    f.status && (f.status === "paid" ? "Paid only" : "Void only"),
+    f.status && (f.status === "paid" ? "Paid only" : "Invalid only"),
     f.from !== undefined && `From ${day(f.from)}`,
     f.to !== undefined && `Until ${day(f.to - 1)}`,
   ].filter(Boolean);
@@ -41,7 +41,7 @@ function billsSheets(params: Record<string, string | undefined>, meta: Meta) {
   const bills = found.slice(0, MAX_ROWS).map((b) => getBill(b.id)!);
   const note = `${describeFilter(filter)}${cut ? ` · only the newest ${MAX_ROWS.toLocaleString("en-IN")} bills are included` : ""} · ${bills.length} ${bills.length === 1 ? "bill" : "bills"}`;
   const station = (b: BillDetail) => b.stationName ?? "Counter sale";
-  const state = (b: BillDetail) => (b.status === "void" ? "Void" : "Paid");
+  const state = (b: BillDetail) => (b.status === "void" ? "Invalid" : "Paid");
   return [
     sheetOf(meta, {
       sheet: "Bills",
@@ -60,7 +60,7 @@ function billsSheets(params: Record<string, string | undefined>, meta: Meta) {
         { header: "GST included", width: 14, kind: "money", value: (b) => rupee(b.taxPaise), total: (r) => sumPaid(r, (b) => b.taxPaise) },
         { header: "Total", width: 14, kind: "money", value: (b) => rupee(b.totalPaise), total: (r) => sumPaid(r, (b) => b.totalPaise) },
         { header: "Status", width: 10, value: state },
-        { header: "Note", width: 32, value: (b) => (b.status === "void" ? `Void: ${b.voidReason ?? ""}` : b.discountPaise > 0 ? `Discount: ${b.discountReason}` : "") },
+        { header: "Note", width: 32, value: (b) => (b.status === "void" ? `Invalid: ${b.voidReason ?? ""}` : b.discountPaise > 0 ? `Discount: ${b.discountReason}` : "") },
       ],
     }),
     sheetOf(meta, {

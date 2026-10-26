@@ -2,15 +2,17 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { freshDb, station, MIN, T0 } from "./helpers.ts";
 import { startSession, stopSession, addItem, getSession } from "../lib/db/sessions.ts";
-import { buildDraft, finalizeBill, finalizeCounterSale, voidBill, getBill, listBills, todaySummary } from "../lib/db/bills.ts";
+import { buildDraft, finalizeBill, finalizeCounterSale, voidBill, getBill, listBills, unseenAdjustments, markAdjustmentsSeen } from "../lib/db/bills.ts";
+import { buildReport } from "../lib/db/reports.ts";
+import { resolveRange } from "../lib/reports-range.ts";
 import { saveCategory, saveItem } from "../lib/db/menu.ts";
 import { setSettings } from "../lib/db/settings.ts";
-import { all, run } from "../lib/db/index.ts";
+import { all } from "../lib/db/index.ts";
 
 beforeEach(freshDb);
 
 const begin = (kind: string, over: Record<string, unknown> = {}) =>
-  startSession({ stationId: station(kind), staffId: "u1", mode: "open", players: 1, now: T0, ...over });
+  startSession({ stationId: station(kind), staffId: "u1", plannedMinutes: 60, players: 1, now: T0, ...over });
 
 const pay = (id: number, amountPaise: number, over: Record<string, unknown> = {}) =>
   finalizeBill({
@@ -19,7 +21,7 @@ const pay = (id: number, amountPaise: number, over: Record<string, unknown> = {}
   });
 
 test("full flow: play, add item, stop, pay; invoice numbers are sequential; station frees up", () => {
-  const id = begin("ps5");
+  const id = begin("ps5", { plannedMinutes: 65 });
   addItem(id, "Coke", 2, 4000, T0);
   stopSession(id, T0 + 65 * MIN, "u1");
   const draft = buildDraft(id, T0 + 65 * MIN);
@@ -30,7 +32,7 @@ test("full flow: play, add item, stop, pay; invoice numbers are sequential; stat
   assert.equal(r.invoiceNo, 1);
   assert.equal(getSession(id).billed, true);
 
-  const again = begin("ps5", { now: T0 + 100 * MIN });
+  const again = begin("ps5", { now: T0 + 100 * MIN, plannedMinutes: 30 });
   stopSession(again, T0 + 130 * MIN, "u1");
   assert.equal(pay(again, 7500).invoiceNo, 2);
 });
@@ -86,22 +88,20 @@ test("discount needs a reason; staff are capped, the owner is not", () => {
   assert.equal(getBill(owner.billId)!.totalPaise, 7500);
 });
 
-test("prepaid: advance is applied automatically; early finish refunds, overrun collects the rest", () => {
-  const early = begin("ps5", { mode: "prepaid", advancePaise: 15000, advanceMethod: "upi" });
-  stopSession(early, T0 + 40 * MIN, "u1"); // 40 min = 10000
-  const r1 = finalizeBill({ sessionId: early, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [], now: T0 });
-  assert.equal(r1.refundPaise, 5000);
-  assert.deepEqual(getBill(r1.billId)!.payments, [{ method: "upi", amountPaise: 10000 }]);
+test("a fixed session is billed its full planned price even when stopped early, and time past the plan is not billed", () => {
+  const early = begin("ps5", { plannedMinutes: 60 });
+  assert.equal(buildDraft(early, T0).lines[0].unitPaise, 15000, "the price is there from the first second");
+  stopSession(early, T0 + 40 * MIN, "u1");
+  const r1 = finalizeBill({ sessionId: early, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "upi", amountPaise: 15000 }], now: T0 });
+  assert.equal(getBill(r1.billId)!.totalPaise, 15000);
+  assert.equal(getBill(r1.billId)!.lines[0].name, "PS5 1 - 60 min");
 
-  const long = begin("ps5", { mode: "prepaid", advancePaise: 15000, advanceMethod: "cash", now: T0 + 100 * MIN });
-  stopSession(long, T0 + 190 * MIN, "u1"); // 90 min = 22500, 7500 still due
-  assert.throws(() => finalizeBill({ sessionId: long, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [], now: T0 }), /add up/);
-  const r2 = finalizeBill({
-    sessionId: long, staffId: "u1", role: "owner", discount: null, discountReason: "",
-    payments: [{ method: "card", amountPaise: 7500 }], now: T0,
-  });
-  assert.equal(r2.refundPaise, 0);
-  assert.equal(getBill(r2.billId)!.payments.length, 2);
+  const long = begin("ps5", { plannedMinutes: 60, now: T0 + 100 * MIN });
+  stopSession(long, T0 + 175 * MIN, "u1"); // nobody noticed for 15 minutes: the clock stopped at 60, so the bill is the plan
+  assert.throws(() => finalizeBill({ sessionId: long, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: 18750 }], now: T0 }), /add up/);
+  const r2 = finalizeBill({ sessionId: long, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: 15000 }], now: T0 });
+  assert.equal(getBill(r2.billId)!.totalPaise, 15000);
+  assert.equal(getBill(r2.billId)!.lines[0].name, "PS5 1 - 60 min");
 });
 
 test("GST on: tax breakup is recorded, total unchanged (inclusive)", () => {
@@ -115,14 +115,6 @@ test("GST on: tax breakup is recorded, total unchanged (inclusive)", () => {
   assert.equal(b.lines[0].taxPct, 18);
 });
 
-test("zero-value session (grace) can be closed with no payments", () => {
-  run("UPDATE rates SET grace_min = 5");
-  const id = begin("pool");
-  stopSession(id, T0 + 2 * MIN, "u1");
-  const r = finalizeBill({ sessionId: id, staffId: "u1", role: "staff", discount: null, discountReason: "", payments: [], now: T0 });
-  assert.equal(getBill(r.billId)!.totalPaise, 0);
-});
-
 test("void: owner only, reason required, once; writes the audit log", () => {
   const id = begin("pool");
   stopSession(id, T0 + 60 * MIN, "u1");
@@ -131,7 +123,7 @@ test("void: owner only, reason required, once; writes the audit log", () => {
   assert.throws(() => voidBill(billId, "  ", "u1", "owner", T0), /reason/);
   voidBill(billId, "wrong station", "u1", "owner", T0);
   assert.equal(getBill(billId)!.status, "void");
-  assert.throws(() => voidBill(billId, "again", "u1", "owner", T0), /already void/);
+  assert.throws(() => voidBill(billId, "again", "u1", "owner", T0), /already marked invalid/);
   const actions = all<{ action: string }>("SELECT action FROM audit_log ORDER BY id").map((a) => a.action);
   assert.deepEqual(actions, ["session.start", "session.stop", "bill.create", "bill.void"]);
 });
@@ -145,35 +137,6 @@ test("listBills and getBill return the joined details", () => {
   assert.equal(row.status, "paid");
   assert.equal(getBill(billId)!.lines[0].name, "Pool 1 - 60 min");
   assert.equal(getBill(99999), undefined);
-});
-
-test("todaySummary: counts paid bills since the cut-off, splits takings by method, ignores void and older bills", () => {
-  const empty = todaySummary(T0);
-  assert.deepEqual(empty, { bills: 0, totalPaise: 0, byMethod: { cash: 0, upi: 0, card: 0 } });
-
-  const a = begin("ps5");
-  stopSession(a, T0 + 60 * MIN, "u1");
-  const totalA = buildDraft(a, T0 + 60 * MIN).lines.reduce((s, l) => s + l.qty * l.unitPaise, 0);
-  const billA = finalizeBill({ sessionId: a, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "upi", amountPaise: totalA }], now: T0 + 61 * MIN });
-
-  const b = begin("pc");
-  stopSession(b, T0 + 30 * MIN, "u1");
-  const totalB = buildDraft(b, T0 + 30 * MIN).lines.reduce((s, l) => s + l.qty * l.unitPaise, 0);
-  const half = Math.floor(totalB / 2);
-  finalizeBill({ sessionId: b, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: half }, { method: "card", amountPaise: totalB - half }], now: T0 + 62 * MIN });
-
-  const both = todaySummary(T0);
-  assert.equal(both.bills, 2);
-  assert.equal(both.totalPaise, totalA + totalB);
-  assert.deepEqual(both.byMethod, { cash: half, upi: totalA, card: totalB - half });
-  assert.equal(both.byMethod.cash + both.byMethod.upi + both.byMethod.card, both.totalPaise);
-
-  assert.equal(todaySummary(T0 + 62 * MIN + 1).bills, 0, "a later cut-off leaves earlier bills out");
-
-  voidBill(billA.billId, "test", "u1", "owner", T0 + 70 * MIN);
-  const afterVoid = todaySummary(T0);
-  assert.equal(afterVoid.bills, 1);
-  assert.equal(afterVoid.byMethod.upi, 0);
 });
 
 test("listBills: payment methods per bill, and search by invoice, station, customer or 'counter', plus method, status and date filters", () => {
@@ -222,13 +185,62 @@ test("listBills: counter sales are found by searching 'counter' and by their cus
 
 test("staff may give exactly their percentage even when rounding pushes it a fraction of a paisa over", () => {
   // 31 minutes of PC at 130/hr is 6717 paise; 10% of that is 671.7, rounded to 672
-  const id = begin("pc");
+  const id = begin("pc", { plannedMinutes: 31 });
   stopSession(id, T0 + 31 * MIN, "u1");
   const sub = getBill(pay(id, 6717 - 672, { role: "staff", discount: { type: "percent", value: 10 }, discountReason: "regular" }).billId)!;
   assert.deepEqual([sub.subtotalPaise, sub.discountPaise, sub.totalPaise], [6717, 672, 6045]);
-  const again = begin("sim"); // 31 minutes at 150/hr is 7750; the cap is 775
+  const again = begin("sim", { plannedMinutes: 31 }); // 31 minutes at 150/hr is 7750; the cap is 775
   stopSession(again, T0 + 31 * MIN, "u1");
   assert.throws(() => pay(again, 7750 - 800, { role: "staff", discount: { type: "flat", value: 800 }, discountReason: "x" }), /at most 10%/);
   assert.throws(() => pay(again, 7750 - 776, { role: "staff", discount: { type: "flat", value: 776 }, discountReason: "x" }), /at most 10%/, "one paisa over is refused");
   assert.equal(getBill(pay(again, 7750 - 775, { role: "staff", discount: { type: "flat", value: 775 }, discountReason: "x" }).billId)!.discountPaise, 775, "exactly the cap is fine");
+});
+
+test("amount taken: staff may take less with a reason, the owner may take more; booked as a discount or on the time line, flagged for the owner", () => {
+  const id = begin("pool");
+  stopSession(id, T0 + 60 * MIN, "u1"); // 15000
+  const take = (over: Record<string, unknown>) =>
+    finalizeBill({ sessionId: id, staffId: "u2", role: "staff", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: 12000 }], now: T0 + 70 * MIN, finalPaise: 12000, adjustReason: "agreed on 120", ...over });
+  assert.throws(() => take({ adjustReason: " " }), /reason for changing the amount/);
+  assert.throws(() => take({ finalPaise: 16000, payments: [{ method: "cash", amountPaise: 16000 }] }), /Only the owner can raise/);
+  assert.throws(() => take({ finalPaise: -5 }), /not valid/);
+  assert.throws(() => take({ payments: [{ method: "cash", amountPaise: 15000 }] }), /add up/, "payments must match the amount taken");
+  assert.equal(listBills().length, 0, "refusals write nothing");
+
+  const { billId } = take({});
+  const b = getBill(billId)!;
+  assert.deepEqual([b.subtotalPaise, b.discountPaise, b.totalPaise, b.adjustedPaise, b.adjustedReason], [15000, 3000, 12000, -3000, "agreed on 120"]);
+  assert.equal(b.discountReason, "Adjusted: agreed on 120", "it shows as a discount in the figures");
+  assert.equal(all<{ action: string }>("SELECT action FROM audit_log WHERE action = 'bill.adjust'").length, 1);
+
+  // the owner is told once, until they mark it seen
+  assert.deepEqual(unseenAdjustments().map((n) => [n.billId, n.wasPaise, n.totalPaise]), [[billId, 15000, 12000]]);
+  markAdjustmentsSeen();
+  assert.deepEqual(unseenAdjustments(), []);
+
+  // the report counts what was taken and lists the change
+  const r = buildReport(resolveRange("custom", "2026-10-07", "2026-10-07", T0));
+  assert.equal(r.takingsPaise, 12000);
+  assert.deepEqual([r.adjusted.bills, r.adjusted.lessPaise, r.adjusted.rows[0].wasPaise], [1, 3000, 15000]);
+
+  const id2 = begin("pc", { now: T0 + 200 * MIN });
+  stopSession(id2, T0 + 260 * MIN, "u1"); // 13000
+  const up = finalizeBill({ sessionId: id2, staffId: "u1", role: "owner", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: 14000 }], now: T0 + 270 * MIN, finalPaise: 14000, adjustReason: "extra hour of food was not added" });
+  const raised = getBill(up.billId)!;
+  assert.deepEqual([raised.totalPaise, raised.adjustedPaise, raised.lines[0].unitPaise], [14000, 1000, 14000], "a raise goes on the time line");
+  assert.equal(unseenAdjustments().length, 1, "and is new for the owner");
+
+  const same = begin("sim", { now: T0 + 400 * MIN });
+  stopSession(same, T0 + 460 * MIN, "u1");
+  const plain = finalizeBill({ sessionId: same, staffId: "u2", role: "staff", discount: null, discountReason: "", payments: [{ method: "cash", amountPaise: 15000 }], now: T0 + 470 * MIN, finalPaise: 15000 });
+  assert.equal(getBill(plain.billId)!.adjustedPaise, 0, "the same amount is not an adjustment");
+});
+
+test("amount taken on a counter sale can be lowered but not raised", () => {
+  const cat = saveCategory(null, "Drinks", "u1");
+  const coke = saveItem(null, { categoryId: cat, name: "Coke", pricePaise: 4000 }, "u1");
+  const base = { lines: [{ itemId: coke, qty: 1 }], staffId: "u2", role: "owner" as const, discount: null, discountReason: "", now: T0 };
+  assert.throws(() => finalizeCounterSale({ ...base, payments: [{ method: "cash", amountPaise: 5000 }], finalPaise: 5000, adjustReason: "x" }), /only be lowered/);
+  const r = finalizeCounterSale({ ...base, payments: [{ method: "cash", amountPaise: 3500 }], finalPaise: 3500, adjustReason: "regular" });
+  assert.deepEqual([getBill(r.billId)!.totalPaise, getBill(r.billId)!.adjustedPaise], [3500, -500]);
 });

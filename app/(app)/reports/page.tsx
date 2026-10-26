@@ -5,7 +5,7 @@ import { requireOwnerPage } from "@/lib/session";
 import { buildReport } from "@/lib/db/reports";
 import type { Report } from "@/lib/db/reports";
 import { RANGE_KEYS, RANGE_LABEL, resolveRange } from "@/lib/reports-range";
-import { rupeesExact, rupeesShort } from "@/lib/format";
+import { dateTime, invoiceNo, rupeesExact, rupeesShort } from "@/lib/format";
 import { Breakdown, Heatmap, Panel, WEEKDAYS, hourLabel } from "@/components/reports/Charts";
 import { Columns, DayChart, Donut, HBars, ShowNumbers, Sparkline, Waterfall, foldSlices } from "@/components/reports/Visuals";
 import { PrintButton } from "@/components/reports/PrintButton";
@@ -24,6 +24,7 @@ const TABS = [
   { id: "daily", label: "Day by day" },
   { id: "hours", label: "Busy hours" },
   { id: "expenses", label: "Expenses" },
+  { id: "close", label: "Close the day" },
   { id: "investments", label: "Investments" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
@@ -97,7 +98,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         {TABS.map((t) => (
           <Link
             key={t.id}
-            href={link(range.key, t.id)}
+            href={link(t.id === "close" && range.key === "month" ? "today" : range.key, t.id)}
             aria-current={tab === t.id ? "page" : undefined}
             className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition ${tab === t.id ? "border-brand text-ink" : "border-transparent text-mute hover:text-ink"}`}
           >
@@ -108,8 +109,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
       {/* All five are in the page so "Print" gives the whole report; on screen only the chosen one shows. */}
       <div data-report-body>
-      {([["overview", "Overview", <Overview key="o" r={r} />], ["sales", "Sales", <Sales key="s" r={r} />], ["daily", "Day by day", <Daily key="d" r={r} />], ["hours", "Busy hours", <Hours key="h" r={r} />], ["expenses", "Expenses", <ExpensesTab key="e" r={r} />], ["investments", "Investments", <ReturnsTab key="i" />]] as const).map(([id, title, body], i) => (
-        <section key={id} aria-label={title} className={`${tab === id ? "" : "hidden print:block"} ${i > 0 ? "print:break-before-page" : ""}`}>
+      {([["overview", "Overview", <Overview key="o" r={r} />], ["sales", "Sales", <Sales key="s" r={r} />], ["daily", "Day by day", <Daily key="d" r={r} />], ["hours", "Busy hours", <Hours key="h" r={r} />], ["expenses", "Expenses", <ExpensesTab key="e" r={r} />], ["close", "Closing sheet", <Closing key="c" r={r} />], ["investments", "Investments", <ReturnsTab key="i" />]] as const).map(([id, title, body], i) => (
+        <section key={id} aria-label={title} className={`${tab === id ? "" : tab === "close" ? "hidden" : "hidden print:block"} ${i > 0 ? "print:break-before-page" : ""}`}>
           <h2 className="mb-4 hidden font-display text-2xl font-bold print:block">{title}</h2>
           {body}
         </section>
@@ -119,11 +120,46 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   );
 }
 
-function Line({ label, value, strong, sign, hint }: { label: string; value: number; strong?: boolean; sign?: "-"; hint?: string }) {
+function Line({ label, value, strong, sign, hint, count }: { label: string; value: number; strong?: boolean; sign?: "-"; hint?: string; count?: boolean }) {
   return (
     <div className={`flex items-baseline justify-between gap-4 py-2 ${strong ? "border-t border-line font-semibold" : "text-silver"}`}>
       <dt>{label}{hint && <span className="ml-2 text-xs font-normal text-mute">{hint}</span>}</dt>
-      <dd className="tnum">{sign === "-" && value > 0 ? "−" : ""}{rupeesExact(value)}</dd>
+      <dd className="tnum">{count ? value : `${sign === "-" && value > 0 ? "−" : ""}${rupeesExact(value)}`}</dd>
+    </div>
+  );
+}
+
+
+/** One printable page to close the day: what to count in the drawer and what was set aside. Best with Today or Yesterday. */
+function Closing({ r }: { r: Report }) {
+  const taken = (m: keyof typeof METHOD) => r.byMethod.find((x) => x.method === m)?.paise ?? 0;
+  return (
+    <div className="space-y-6">
+      <Panel title="Money taken" note={r.range.fromDay === r.range.toDay ? r.range.fromDay : `${r.range.fromDay} to ${r.range.toDay}. Pick Today or Yesterday for a single day's sheet.`}>
+        <dl>
+          <Line label="Cash to count in the drawer" value={taken("cash")} />
+          <Line label="UPI received" value={taken("upi")} />
+          <Line label="Card" value={taken("card")} />
+          <Line label="Total taken" value={r.takingsPaise} strong />
+        </dl>
+        <p className="mt-2 text-xs text-mute">Cash is what was paid in cash on bills. Expenses paid out of the drawer are not taken off here.</p>
+      </Panel>
+      <Panel title="What happened">
+        <dl className="grid gap-x-8 sm:grid-cols-2">
+          <Line label="Paid bills" value={r.bills} count />
+          <Line label="Sessions started" value={r.sessionsStarted} count />
+          <Line label="Discounts given" value={r.discountPaise} />
+          <Line label="GST included in takings" value={r.taxPaise} />
+          <Line label="Expenses" value={r.expensesPaise} />
+          <Line label={`Amount changed at payment (${r.adjusted.bills})`} value={r.adjusted.lessPaise} hint={r.adjusted.morePaise > 0 ? `and ${rupeesExact(r.adjusted.morePaise)} taken more` : "taken less"} />
+          <Line label={`Marked invalid (${r.invalid.bills} ${r.invalid.bills === 1 ? "bill" : "bills"})`} value={r.invalid.paise} hint="not counted" />
+          <Line label="Sessions cancelled" value={r.cancelled.sessions} count />
+        </dl>
+      </Panel>
+      <div className="hidden grid-cols-2 gap-10 pt-10 text-sm print:grid">
+        <div className="border-t border-ink pt-1">Counted by</div>
+        <div className="border-t border-ink pt-1">Checked by</div>
+      </div>
     </div>
   );
 }
@@ -173,7 +209,121 @@ function Overview({ r }: { r: Report }) {
           </dl>
         </ShowNumbers>
       </Panel>
+
+      <AdjustedBills r={r} />
+      <InvalidBills r={r} />
+      <CancelledSessions r={r} />
     </div>
+  );
+}
+
+/** Paid bills where the amount taken was changed at payment. They are inside every figure already; listed so the owner can check each one. */
+function AdjustedBills({ r }: { r: Report }) {
+  const { bills, lessPaise, morePaise, rows } = r.adjusted;
+  if (bills === 0) return null;
+  const parts = [lessPaise > 0 ? `${rupeesExact(lessPaise)} taken less` : "", morePaise > 0 ? `${rupeesExact(morePaise)} taken more` : ""].filter(Boolean).join(", ");
+  return (
+    <Panel title="Amount changed at payment" note={`${bills} ${bills === 1 ? "bill" : "bills"}: ${parts}. These are counted in the figures above at the amount actually taken.`}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs uppercase tracking-wider text-mute">
+            <tr className="border-b border-line">
+              <th className="py-2 pr-3 font-medium">Invoice</th>
+              <th className="px-3 py-2 font-medium">When</th>
+              <th className="px-3 py-2 font-medium">Station</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 font-medium">Changed by</th>
+              <th className="px-3 py-2 text-right font-medium">Worked out</th>
+              <th className="py-2 pl-3 text-right font-medium">Taken</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((b) => (
+              <tr key={b.id}>
+                <td className="py-2 pr-3 font-semibold"><Link className="text-brand-text hover:underline" href={`/bills/${b.id}`}>{invoiceNo(b.invoiceNo)}</Link></td>
+                <td className="px-3 py-2 text-silver">{dateTime(b.createdAt)}</td>
+                <td className="px-3 py-2">{b.station ?? "Counter sale"}</td>
+                <td className="px-3 py-2 text-silver">{b.reason}</td>
+                <td className="px-3 py-2 text-silver">{b.by}</td>
+                <td className="tnum px-3 py-2 text-right text-mute">{rupeesExact(b.wasPaise)}</td>
+                <td className="tnum py-2 pl-3 text-right font-semibold">{rupeesExact(b.totalPaise)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+/** Bills the owner marked invalid: listed so nothing vanishes, but not part of any figure on this page. */
+function InvalidBills({ r }: { r: Report }) {
+  const { bills, paise, rows } = r.invalid;
+  if (bills === 0) return null;
+  return (
+    <Panel title="Marked invalid" note={`${bills} ${bills === 1 ? "bill" : "bills"}, ${rupeesExact(paise)} in all. Not counted in any figure on this page.`}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs uppercase tracking-wider text-mute">
+            <tr className="border-b border-line">
+              <th className="py-2 pr-3 font-medium">Invoice</th>
+              <th className="px-3 py-2 font-medium">When</th>
+              <th className="px-3 py-2 font-medium">Station</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 font-medium">Marked by</th>
+              <th className="py-2 pl-3 text-right font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((b) => (
+              <tr key={b.id}>
+                <td className="py-2 pr-3 font-semibold"><Link className="text-brand-text hover:underline" href={`/bills/${b.id}`}>{invoiceNo(b.invoiceNo)}</Link></td>
+                <td className="px-3 py-2 text-silver">{dateTime(b.createdAt)}</td>
+                <td className="px-3 py-2">{b.station ?? "Counter sale"}</td>
+                <td className="px-3 py-2 text-silver">{b.reason}</td>
+                <td className="px-3 py-2 text-silver">{b.by}</td>
+                <td className="tnum py-2 pl-3 text-right text-mute line-through">{rupeesExact(b.totalPaise)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {bills > rows.length && <p className="mt-3 text-xs text-mute">Showing the latest {rows.length}. Filter Bills by Status: Invalid to see them all.</p>}
+    </Panel>
+  );
+}
+
+/** Sessions the owner cancelled as started by mistake: listed, never counted. */
+function CancelledSessions({ r }: { r: Report }) {
+  const { sessions, rows } = r.cancelled;
+  if (sessions === 0) return null;
+  return (
+    <Panel title="Cancelled sessions" note={`${sessions} ${sessions === 1 ? "session was" : "sessions were"} started by mistake and cancelled. Nothing was billed and none are counted.`}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs uppercase tracking-wider text-mute">
+            <tr className="border-b border-line">
+              <th className="py-2 pr-3 font-medium">Started</th>
+              <th className="px-3 py-2 font-medium">Station</th>
+              <th className="px-3 py-2 font-medium">Set time</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="py-2 pl-3 font-medium">Cancelled by</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((c) => (
+              <tr key={c.id}>
+                <td className="py-2 pr-3 text-silver">{dateTime(c.startedAt)}</td>
+                <td className="px-3 py-2">{c.station}</td>
+                <td className="px-3 py-2 text-silver">{c.plannedMinutes ? `${c.plannedMinutes} min` : "None"}</td>
+                <td className="px-3 py-2 text-silver">{c.reason}</td>
+                <td className="py-2 pl-3 text-silver">{c.by}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
   );
 }
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { billableMs, chargedMinutes, sessionChargePaise, sessionStatus, prepaidMinutes } from "../lib/engine/pricing.ts";
+import { billableMs, chargedMinutes, sessionChargePaise, sessionStatus } from "../lib/engine/pricing.ts";
 import type { RateSnapshot, SessionTimes } from "../lib/engine/pricing.ts";
 import { pickRate } from "../lib/engine/rates.ts";
 import type { RateRow } from "../lib/engine/rates.ts";
@@ -10,7 +10,7 @@ import { upiLink } from "../lib/engine/upi.ts";
 const MIN = 60000;
 const rate: RateSnapshot = {
   rateId: 1, name: "PS5", hourlyPaise: 15000, extraControllerPaise: 0,
-  incrementMin: 1, minMinutes: 15, graceMin: 0,
+  incrementMin: 1,
 };
 const t0 = 1_700_000_000_000;
 const times = (over: Partial<SessionTimes> = {}): SessionTimes => ({
@@ -28,42 +28,56 @@ test("billableMs never goes negative (clock moved back)", () => {
   assert.equal(billableMs(times(), t0 - 5 * MIN), 0);
 });
 
-test("minimum charge applies to short sessions", () => {
-  assert.equal(chargedMinutes(2 * MIN, rate), 15);
-});
-
-test("one second over a minute rounds up", () => {
-  assert.equal(chargedMinutes(20 * MIN + 1, rate), 21);
-  assert.equal(chargedMinutes(20 * MIN, rate), 20);
+test("with no planned time (old sessions) the time played is what is charged, rounded up to the minute", () => {
+  assert.equal(chargedMinutes(2 * MIN, rate, null), 2);
+  assert.equal(chargedMinutes(20 * MIN + 1, rate, null), 21);
+  assert.equal(chargedMinutes(20 * MIN, rate, null), 20);
+  assert.equal(chargedMinutes(0, rate, null), 0);
 });
 
 test("increment rounding", () => {
-  assert.equal(chargedMinutes(31 * MIN, { ...rate, incrementMin: 15 }), 45);
+  assert.equal(chargedMinutes(31 * MIN, { ...rate, incrementMin: 15 }, null), 45);
 });
 
-test("grace makes a quick abort free", () => {
-  assert.equal(chargedMinutes(3 * MIN, { ...rate, graceMin: 5 }), 0);
-  assert.equal(chargedMinutes(6 * MIN, { ...rate, graceMin: 5 }), 15);
+test("a planned session is charged its whole planned time from the start, however early it stops", () => {
+  assert.equal(chargedMinutes(0, rate, 60), 60);
+  assert.equal(chargedMinutes(2 * MIN, rate, 30), 30);
+  assert.equal(chargedMinutes(40 * MIN, rate, 60), 60);
+  assert.equal(chargedMinutes(60 * MIN, rate, 60), 60);
+});
+
+test("time past the planned time is added minute by minute (or by the step)", () => {
+  assert.equal(chargedMinutes(60 * MIN + 1, rate, 60), 61);
+  assert.equal(chargedMinutes(75 * MIN, rate, 60), 75);
+  assert.equal(chargedMinutes(61 * MIN, { ...rate, incrementMin: 15 }, 60), 75);
 });
 
 test("charge is minutes * hourly / 60, rounded once", () => {
-  assert.equal(sessionChargePaise(60 * MIN, rate, 1), 15000);
-  assert.equal(sessionChargePaise(20 * MIN, rate, 1), 5000);
-  assert.equal(sessionChargePaise(17 * MIN, { ...rate, hourlyPaise: 13000 }, 1), 3683); // 3683.33
+  assert.equal(sessionChargePaise(60 * MIN, rate, 1, null), 15000);
+  assert.equal(sessionChargePaise(20 * MIN, rate, 1, null), 5000);
+  assert.equal(sessionChargePaise(17 * MIN, { ...rate, hourlyPaise: 13000 }, 1, null), 3683); // 3683.33
+});
+
+test("the planned price shows the moment a session starts, and grows only after the time is up", () => {
+  assert.equal(sessionChargePaise(0, { ...rate, hourlyPaise: 16900 }, 1, 60), 16900);
+  assert.equal(sessionChargePaise(0, { ...rate, hourlyPaise: 16900 }, 1, 30), 8450);
+  assert.equal(sessionChargePaise(59 * MIN, { ...rate, hourlyPaise: 16900 }, 1, 60), 16900);
+  assert.equal(sessionChargePaise(90 * MIN, { ...rate, hourlyPaise: 16900 }, 1, 60), 25350);
 });
 
 test("extra controllers add pro rata", () => {
   const r = { ...rate, extraControllerPaise: 5000 };
-  assert.equal(sessionChargePaise(60 * MIN, r, 3), 15000 + 2 * 5000);
-  assert.equal(sessionChargePaise(60 * MIN, rate, 4), 15000); // zone without extras ignores players
+  assert.equal(sessionChargePaise(60 * MIN, r, 3, null), 15000 + 2 * 5000);
+  assert.equal(sessionChargePaise(60 * MIN, rate, 4, null), 15000); // zone without extras ignores players
+  assert.equal(sessionChargePaise(0, r, 2, 60), 20000, "and a planned session includes them from the start");
 });
 
-test("status: running, ending, overtime, paused", () => {
+test("status: running, ending, time up, paused", () => {
   const T = times();
   assert.equal(sessionStatus(T, null, 10, t0 + 500 * MIN), "running");
   assert.equal(sessionStatus(T, 60, 10, t0 + 30 * MIN), "running");
   assert.equal(sessionStatus(T, 60, 10, t0 + 50 * MIN), "ending");
-  assert.equal(sessionStatus(T, 60, 10, t0 + 60 * MIN), "overtime");
+  assert.equal(sessionStatus(T, 60, 10, t0 + 60 * MIN), "timeup");
   assert.equal(sessionStatus(times({ pausedAt: t0 + 5 * MIN }), 60, 10, t0 + 55 * MIN), "paused");
 });
 
@@ -72,15 +86,9 @@ test("pause pushes the end out", () => {
   assert.equal(sessionStatus(T, 60, 10, t0 + 70 * MIN), "ending"); // 50 played of 60
 });
 
-test("prepaid minutes", () => {
-  assert.equal(prepaidMinutes(15000, 15000), 60);
-  assert.equal(prepaidMinutes(10000, 15000), 40);
-  assert.equal(prepaidMinutes(100, 0), 0);
-});
-
 const base: RateRow = {
   id: 1, zoneId: 1, name: "Std", hourlyPaise: 15000, extraControllerPaise: 0,
-  incrementMin: 1, minMinutes: 15, graceMin: 0, daysMask: 127, fromMin: 0, toMin: 1440, priority: 0,
+  incrementMin: 1, daysMask: 127, fromMin: 0, toMin: 1440, priority: 0,
 };
 
 test("pickRate: priority, window, zone, none", () => {

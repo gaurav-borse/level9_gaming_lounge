@@ -9,7 +9,7 @@ export const T0 = new Date(2026, 9, 7, 15, 0).getTime(); // Wed 15:00 local
 export function freshDb(): void {
   process.env.LOUNGE_DB = ":memory:";
   closeDb();
-  getDb();
+  getDb().exec("CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT 'staff')"); // the sign-in system's table, empty here
   seedLevel9Starter();
 }
 
